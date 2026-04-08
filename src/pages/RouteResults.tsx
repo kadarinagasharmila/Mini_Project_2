@@ -52,7 +52,7 @@ const RouteResults = () => {
         const { data, error } = await supabase.functions.invoke("traffic-ai", {
           body: {
             routeInfo: {
-              sourceName: "Your location",
+              sourceName: state?.sourceName || "Your location",
               destName,
               distance: results[0]?.distance,
               vehicle,
