@@ -97,6 +97,7 @@ const MapView = ({ userLocation, className = "", routeCoords, destination, bound
       )}
       {bounds && <FitBounds bounds={bounds} />}
     </MapContainer>
+    </div>
   );
 };
 
