@@ -21,6 +21,8 @@ const RouteResults = () => {
   const [routes, setRoutes] = useState<RouteResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedRoute, setSelectedRoute] = useState(0);
+  const [aiInsight, setAiInsight] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
 
   const source = state?.source || [17.385, 78.4867];
   const destination = state?.destination || [17.3616, 78.4747];
@@ -42,6 +44,25 @@ const RouteResults = () => {
       }
       setRoutes(results);
       setLoading(false);
+
+      // Fetch AI analysis
+      setAiLoading(true);
+      try {
+        const { data, error } = await supabase.functions.invoke("traffic-ai", {
+          body: {
+            routeInfo: {
+              sourceName: "Your location",
+              destName,
+              distance: results[0]?.distance,
+              vehicle,
+            },
+          },
+        });
+        if (!error && data?.analysis) {
+          setAiInsight(data.analysis);
+        }
+      } catch {}
+      setAiLoading(false);
     };
     fetchRoutes();
   }, []);
