@@ -195,7 +195,14 @@ const RouteResults = () => {
                           onClick={(e) => {
                             e.stopPropagation();
                             navigate("/navigate", {
-                              state: { route, destName },
+                              state: {
+                                route,
+                                destName,
+                                sourceName: state?.sourceName || "Current Location",
+                                sourceCoords: source,
+                                destCoords: destination,
+                                vehicle,
+                              },
                             });
                           }}
                           className="flex-1 bg-primary text-primary-foreground py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1"
