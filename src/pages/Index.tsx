@@ -2,15 +2,17 @@ import { useState, useCallback, useEffect } from "react";
 import MapView from "@/components/MapView";
 import SearchBar from "@/components/SearchBar";
 import MapControls from "@/components/MapControls";
+import ReportIncidentSheet from "@/components/ReportIncidentSheet";
 
 import { getTrafficCounts, predictTrafficForArea } from "@/services/trafficPrediction";
-import { Sparkles } from "lucide-react";
+import { Sparkles, AlertTriangle } from "lucide-react";
 
 const Index = () => {
   const [userLocation, setUserLocation] = useState<[number, number] | undefined>();
   const [trafficOn, setTrafficOn] = useState(false);
   const [trafficData, setTrafficData] = useState(getTrafficCounts());
   const [aiInsight, setAiInsight] = useState("");
+  const [reportOpen, setReportOpen] = useState(false);
 
   useEffect(() => {
     const prediction = predictTrafficForArea();
@@ -59,7 +61,19 @@ const Index = () => {
         </div>
       </div>
 
-      
+      {/* Report Incident Button */}
+      <button
+        onClick={() => setReportOpen(true)}
+        className="fixed bottom-[7.5rem] right-4 z-[500] bg-destructive text-destructive-foreground w-12 h-12 rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+      >
+        <AlertTriangle className="w-5 h-5" />
+      </button>
+
+      <ReportIncidentSheet
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+        location={userLocation || [17.385, 78.4867]}
+      />
     </div>
   );
 };
