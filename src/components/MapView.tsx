@@ -69,13 +69,14 @@ const MapView = ({ userLocation, className = "", routeCoords, destination, bound
   });
 
   return (
-    <MapContainer
-      center={userLocation || HYDERABAD_CENTER}
-      zoom={12}
-      className={`w-full h-full ${className}`}
-      zoomControl={false}
-      attributionControl={false}
-    >
+    <div className={`w-full h-full absolute inset-0 ${className}`}>
+      <MapContainer
+        center={userLocation || HYDERABAD_CENTER}
+        zoom={12}
+        style={{ width: "100%", height: "100%" }}
+        zoomControl={false}
+        attributionControl={false}
+      >
       <TileLayer
         url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
