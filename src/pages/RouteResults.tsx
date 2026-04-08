@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
-import { ArrowLeft, Clock, MapPin, Navigation, Share2, Star, IndianRupee, Sparkles, Loader2 } from "lucide-react";
+import { ArrowLeft, Clock, MapPin, Navigation, Share2, Star, IndianRupee, Sparkles, Loader2, Brain } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import MapView from "@/components/MapView";
 import BottomNav from "@/components/BottomNav";
 import { getRoute, RouteResult } from "@/services/routingService";
+import { supabase } from "@/integrations/supabase/client";
 import L from "leaflet";
 
 const RouteResults = () => {
@@ -20,6 +21,8 @@ const RouteResults = () => {
   const [routes, setRoutes] = useState<RouteResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedRoute, setSelectedRoute] = useState(0);
+  const [aiInsight, setAiInsight] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
 
   const source = state?.source || [17.385, 78.4867];
   const destination = state?.destination || [17.3616, 78.4747];
@@ -41,6 +44,25 @@ const RouteResults = () => {
       }
       setRoutes(results);
       setLoading(false);
+
+      // Fetch AI analysis
+      setAiLoading(true);
+      try {
+        const { data, error } = await supabase.functions.invoke("traffic-ai", {
+          body: {
+            routeInfo: {
+              sourceName: "Your location",
+              destName,
+              distance: results[0]?.distance,
+              vehicle,
+            },
+          },
+        });
+        if (!error && data?.analysis) {
+          setAiInsight(data.analysis);
+        }
+      } catch {}
+      setAiLoading(false);
     };
     fetchRoutes();
   }, []);
@@ -105,6 +127,25 @@ const RouteResults = () => {
               <h2 className="text-base font-semibold text-foreground mb-3">
                 {routes.length} route{routes.length !== 1 ? "s" : ""} found
               </h2>
+
+              {/* AI Traffic Insight */}
+              {(aiInsight || aiLoading) && (
+                <div className="bg-primary/5 border border-primary/20 rounded-xl p-3 mb-3 flex items-start gap-2">
+                  <Brain className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-xs font-semibold text-primary mb-1">AI Traffic Analysis</p>
+                    {aiLoading ? (
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="w-3 h-3 text-primary animate-spin" />
+                        <span className="text-xs text-muted-foreground">Analyzing traffic patterns...</span>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">{aiInsight.replace(/\*\*/g, "")}</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-3">
                 {routes.map((route, idx) => (
                   <button
