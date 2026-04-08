@@ -1,4 +1,5 @@
-// OSRM public API - free, no key required, no CORS issues
+// OSRM public demo server - supports driving, bike (cycling not available on demo), foot
+// For bike/bus we use driving with speed adjustments
 const OSRM_BASE = "https://router.project-osrm.org/route/v1";
 
 // Telangana locations geocoding database
@@ -51,13 +52,14 @@ export const TELANGANA_LOCATIONS: Record<string, [number, number]> = {
 };
 
 export interface RouteResult {
-  distance: number; // km
-  duration: number; // minutes
-  geometry: [number, number][]; // lat,lng pairs
+  distance: number;
+  duration: number;
+  geometry: [number, number][];
   steps: RouteStep[];
   toll: string;
   trafficLevel: string;
   trafficColor: string;
+  vehicleType: string;
 }
 
 export interface RouteStep {
@@ -67,7 +69,6 @@ export interface RouteStep {
   icon: string;
 }
 
-// Geocode a location name to coordinates
 export function geocodeLocation(name: string): [number, number] | null {
   const normalized = name.toLowerCase().trim();
   if (TELANGANA_LOCATIONS[normalized]) return TELANGANA_LOCATIONS[normalized];
@@ -77,7 +78,6 @@ export function geocodeLocation(name: string): [number, number] | null {
   return null;
 }
 
-// Decode OSRM polyline (precision 5)
 function decodePolyline(encoded: string): [number, number][] {
   const coords: [number, number][] = [];
   let index = 0, lat = 0, lng = 0;
@@ -100,17 +100,34 @@ const MANEUVER_ICONS: Record<string, string> = {
   "end of road": "→", "continue": "↑", "new name": "↑", "ramp": "↗",
 };
 
-// Get route from OSRM (free public API)
+// Vehicle speed multipliers relative to car driving speed
+const VEHICLE_SPEED_FACTORS: Record<string, number> = {
+  car: 1.0,
+  bike: 0.5,     // bikes go ~half car speed in city
+  bus: 0.65,     // buses are slower due to stops, traffic
+  walk: 0.15,    // walking is ~5 km/h vs ~30 km/h car
+};
+
+// Vehicle-specific average speeds (km/h) for Telangana roads
+const VEHICLE_AVG_SPEEDS: Record<string, number> = {
+  car: 28,
+  bike: 22,
+  bus: 18,
+  walk: 5,
+};
+
 export async function getRoute(
   start: [number, number],
   end: [number, number],
-  profile: string = "driving-car"
+  vehicle: string = "car"
 ): Promise<RouteResult[]> {
-  const osrmProfile = profile === "walk" ? "foot" : profile === "bike" ? "bike" : "car";
+  // OSRM public demo only supports driving & foot
+  // For bike, use driving route with adjusted timings
+  // For bus, use driving route with bus-specific adjustments (stops, slower speed)
+  const osrmMode = vehicle === "walk" ? "foot" : "driving";
 
   try {
-    // Request alternatives=true for multiple routes
-    const url = `${OSRM_BASE}/${osrmProfile === "car" ? "driving" : osrmProfile === "bike" ? "cycling" : "walking"}/${start[1]},${start[0]};${end[1]},${end[0]}?overview=full&geometries=polyline&steps=true&alternatives=3`;
+    const url = `${OSRM_BASE}/${osrmMode === "foot" ? "walking" : "driving"}/${start[1]},${start[0]};${end[1]},${end[0]}?overview=full&geometries=polyline&steps=true&alternatives=3`;
 
     const response = await fetch(url);
     if (!response.ok) throw new Error(`OSRM error: ${response.status}`);
@@ -118,101 +135,147 @@ export async function getRoute(
     const data = await response.json();
     if (data.code !== "Ok" || !data.routes?.length) throw new Error("No route found");
 
+    const speedFactor = VEHICLE_SPEED_FACTORS[vehicle] || 1.0;
+
     const results: RouteResult[] = data.routes.map((route: any, idx: number) => {
       const distanceKm = route.distance / 1000;
-      const durationMin = Math.round(route.duration / 60);
+      // Adjust duration based on vehicle type
+      let durationMin: number;
+      if (vehicle === "walk") {
+        // OSRM walking profile gives accurate walk times
+        durationMin = Math.round(route.duration / 60);
+      } else if (vehicle === "bus") {
+        // Bus: driving time + stop time (~2 min per 3 km for bus stops)
+        const baseDriving = route.duration / 60;
+        const busStops = Math.floor(distanceKm / 3);
+        durationMin = Math.round(baseDriving / speedFactor + busStops * 2);
+      } else if (vehicle === "bike") {
+        // Bike: use average speed calculation
+        durationMin = Math.round((distanceKm / VEHICLE_AVG_SPEEDS.bike) * 60);
+      } else {
+        durationMin = Math.round(route.duration / 60);
+      }
+
+      const traffic = predictTraffic(distanceKm, durationMin, vehicle);
+      // Apply traffic multiplier to duration
+      const adjustedDuration = Math.round(durationMin * traffic.multiplier);
+
       const geometry = decodePolyline(route.geometry);
-      const traffic = predictTraffic(distanceKm, durationMin);
 
-      const steps: RouteStep[] = route.legs[0].steps.map((step: any) => ({
-        instruction: step.maneuver.instruction || step.name || "Continue",
-        distance: step.distance > 1000
-          ? `${(step.distance / 1000).toFixed(1)} km`
-          : `${Math.round(step.distance)} m`,
-        duration: step.duration > 60
-          ? `${Math.round(step.duration / 60)} min`
-          : `${Math.round(step.duration)} sec`,
-        icon: MANEUVER_ICONS[step.maneuver.type] || "↑",
-      }));
+      const steps: RouteStep[] = route.legs[0].steps.map((step: any) => {
+        const stepDist = step.distance;
+        let stepDur: number;
+        if (vehicle === "walk") {
+          stepDur = step.duration;
+        } else {
+          stepDur = (stepDist / 1000) / (VEHICLE_AVG_SPEEDS[vehicle] || 28) * 3600;
+        }
 
-      const hasToll = distanceKm > 15;
+        return {
+          instruction: step.maneuver.instruction || step.name || "Continue",
+          distance: stepDist > 1000
+            ? `${(stepDist / 1000).toFixed(1)} km`
+            : `${Math.round(stepDist)} m`,
+          duration: stepDur > 60
+            ? `${Math.round(stepDur / 60)} min`
+            : `${Math.round(stepDur)} sec`,
+          icon: MANEUVER_ICONS[step.maneuver.type] || "↑",
+        };
+      });
+
+      // Add bus stop info to steps if bus
+      if (vehicle === "bus" && steps.length > 2) {
+        const busStopCount = Math.floor(distanceKm / 3);
+        if (busStopCount > 0) {
+          steps.splice(1, 0, {
+            instruction: `~${busStopCount} bus stops along this route`,
+            distance: "",
+            duration: `+${busStopCount * 2} min`,
+            icon: "🚏",
+          });
+        }
+      }
+
+      const hasToll = vehicle === "car" && distanceKm > 15;
       const tollCost = hasToll ? Math.round(distanceKm * 2.5) : 0;
 
       return {
         distance: Math.round(distanceKm * 10) / 10,
-        duration: durationMin,
+        duration: adjustedDuration,
         geometry,
         steps,
-        toll: idx === 0 && tollCost > 0 ? `₹${tollCost}` : "Free",
+        toll: vehicle === "car" && idx === 0 && tollCost > 0 ? `₹${tollCost}` : "Free",
         trafficLevel: traffic.level,
         trafficColor: traffic.color,
+        vehicleType: vehicle,
       };
     });
 
     // If API only returned 1 route, generate alternatives
     if (results.length === 1) {
+      const r = results[0];
       results.push(
-        { ...results[0], distance: Math.round(results[0].distance * 0.85 * 10) / 10, duration: Math.round(results[0].duration * 1.3), toll: "Free", trafficLevel: "Moderate traffic", trafficColor: "text-traffic-moderate" },
-        { ...results[0], distance: Math.round(results[0].distance * 0.75 * 10) / 10, duration: Math.round(results[0].duration * 1.6), toll: "Free", trafficLevel: "Heavy traffic", trafficColor: "text-traffic-heavy" },
+        { ...r, distance: Math.round(r.distance * 1.15 * 10) / 10, duration: Math.round(r.duration * 1.25), toll: "Free", trafficLevel: "Moderate traffic", trafficColor: "text-traffic-moderate" },
+        { ...r, distance: Math.round(r.distance * 1.3 * 10) / 10, duration: Math.round(r.duration * 1.5), toll: "Free", trafficLevel: "Heavy traffic", trafficColor: "text-traffic-heavy" },
       );
     }
 
     return results.slice(0, 3);
   } catch (error) {
     console.error("Routing error, using fallback:", error);
-    return getFallbackRoute(start, end);
+    return getFallbackRoute(start, end, vehicle);
   }
 }
 
-// Fallback route calculation using Haversine
-function getFallbackRoute(start: [number, number], end: [number, number]): RouteResult[] {
+function getFallbackRoute(start: [number, number], end: [number, number], vehicle: string): RouteResult[] {
   const R = 6371;
   const dLat = ((end[0] - start[0]) * Math.PI) / 180;
   const dLon = ((end[1] - start[1]) * Math.PI) / 180;
   const a = Math.sin(dLat / 2) ** 2 + Math.cos((start[0] * Math.PI) / 180) * Math.cos((end[0] * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
   const straightLine = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  const roadDistance = straightLine * 1.4;
-  const duration = Math.round(roadDistance / 0.6);
-  const traffic = predictTraffic(roadDistance, duration);
+  const roadDistance = straightLine * (vehicle === "walk" ? 1.2 : 1.4);
+  const avgSpeed = VEHICLE_AVG_SPEEDS[vehicle] || 28;
+  const duration = Math.round((roadDistance / avgSpeed) * 60);
+  const traffic = predictTraffic(roadDistance, duration, vehicle);
+  const adjustedDuration = Math.round(duration * traffic.multiplier);
 
-  // Create a simple curved geometry through a midpoint
   const midLat = (start[0] + end[0]) / 2;
   const midLng = (start[1] + end[1]) / 2;
   const offset = straightLine * 0.001;
 
-  const mainGeometry: [number, number][] = [start, [midLat + offset, midLng - offset], end];
-  const altGeometry1: [number, number][] = [start, [midLat - offset, midLng + offset], end];
-  const altGeometry2: [number, number][] = [start, [midLat + offset * 2, midLng], end];
+  const vehicleLabel = vehicle === "bus" ? "🚌" : vehicle === "bike" ? "🚲" : vehicle === "walk" ? "🚶" : "🚗";
 
   const baseRoute: RouteResult = {
     distance: Math.round(roadDistance * 10) / 10,
-    duration,
-    geometry: mainGeometry,
+    duration: adjustedDuration,
+    geometry: [start, [midLat + offset, midLng - offset], end],
     steps: [
-      { instruction: "Head toward destination", distance: `${Math.round(roadDistance)} km`, duration: `${duration} min`, icon: "↑" },
-      { instruction: "Continue on main road", distance: `${Math.round(roadDistance * 0.6)} km`, duration: `${Math.round(duration * 0.6)} min`, icon: "↑" },
+      { instruction: `${vehicleLabel} Head toward destination`, distance: `${Math.round(roadDistance)} km`, duration: `${adjustedDuration} min`, icon: "↑" },
+      { instruction: "Continue on main road", distance: `${Math.round(roadDistance * 0.6)} km`, duration: `${Math.round(adjustedDuration * 0.6)} min`, icon: "↑" },
       { instruction: "Arrive at destination", distance: "", duration: "", icon: "📍" },
     ],
-    toll: roadDistance > 15 ? `₹${Math.round(roadDistance * 2.5)}` : "Free",
+    toll: vehicle === "car" && roadDistance > 15 ? `₹${Math.round(roadDistance * 2.5)}` : "Free",
     trafficLevel: traffic.level,
     trafficColor: traffic.color,
+    vehicleType: vehicle,
   };
 
   return [
     baseRoute,
-    { ...baseRoute, geometry: altGeometry1, distance: Math.round(roadDistance * 0.85 * 10) / 10, duration: Math.round(duration * 1.3), toll: "Free", trafficLevel: "Moderate traffic", trafficColor: "text-traffic-moderate" },
-    { ...baseRoute, geometry: altGeometry2, distance: Math.round(roadDistance * 0.75 * 10) / 10, duration: Math.round(duration * 1.6), toll: "Free", trafficLevel: "Heavy traffic", trafficColor: "text-traffic-heavy" },
+    { ...baseRoute, geometry: [start, [midLat - offset, midLng + offset], end], distance: Math.round(roadDistance * 1.15 * 10) / 10, duration: Math.round(adjustedDuration * 1.25), toll: "Free", trafficLevel: "Moderate traffic", trafficColor: "text-traffic-moderate" },
+    { ...baseRoute, geometry: [start, [midLat + offset * 2, midLng], end], distance: Math.round(roadDistance * 1.3 * 10) / 10, duration: Math.round(adjustedDuration * 1.5), toll: "Free", trafficLevel: "Heavy traffic", trafficColor: "text-traffic-heavy" },
   ];
 }
 
-// AI Traffic Prediction based on time patterns
-function predictTraffic(distanceKm: number, baseDuration: number): { level: string; color: string; multiplier: number } {
+// Vehicle-aware traffic prediction
+function predictTraffic(distanceKm: number, baseDuration: number, vehicle: string = "car"): { level: string; color: string; multiplier: number } {
   const now = new Date();
   const hour = now.getHours();
   const day = now.getDay();
   const isWeekend = day === 0 || day === 6;
 
   let multiplier = 1.0;
+
   if (!isWeekend) {
     if (hour >= 8 && hour <= 10) multiplier = 1.6;
     else if (hour >= 17 && hour <= 20) multiplier = 1.8;
@@ -220,15 +283,25 @@ function predictTraffic(distanceKm: number, baseDuration: number): { level: stri
   } else {
     if (hour >= 10 && hour <= 18) multiplier = 1.15;
   }
+
+  // Vehicle-specific adjustments
+  if (vehicle === "bike") {
+    multiplier *= 0.7; // bikes less affected by car traffic
+  } else if (vehicle === "bus") {
+    multiplier *= 1.15; // buses more affected due to fixed routes & stops
+  } else if (vehicle === "walk") {
+    multiplier = 1.0; // walking unaffected by traffic
+  }
+
   if (distanceKm > 20) multiplier *= 1.1;
 
+  if (vehicle === "walk") return { level: "Walking pace", color: "text-traffic-free", multiplier: 1.0 };
   if (multiplier <= 1.1) return { level: "Light traffic", color: "text-traffic-free", multiplier };
   if (multiplier <= 1.35) return { level: "Moderate traffic", color: "text-traffic-moderate", multiplier };
   if (multiplier <= 1.6) return { level: "Heavy traffic", color: "text-traffic-heavy", multiplier };
   return { level: "Severe traffic", color: "text-traffic-severe", multiplier };
 }
 
-// Get AI optimal departure suggestion
 export function getOptimalDeparture(distanceKm: number): string {
   const now = new Date();
   const hour = now.getHours();
