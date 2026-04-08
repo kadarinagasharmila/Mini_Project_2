@@ -14,6 +14,7 @@ import TrafficReports from "./pages/TrafficReports";
 import OfflineMaps from "./pages/OfflineMaps";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
+import BottomNav from "./components/BottomNav";
 
 const queryClient = new QueryClient();
 
@@ -36,6 +37,7 @@ const App = () => (
             <Route path="/auth" element={<Auth />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
+          <BottomNav />
         </BrowserRouter>
       </AuthProvider>
     </TooltipProvider>
