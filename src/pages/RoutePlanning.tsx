@@ -56,7 +56,7 @@ const RoutePlanning = () => {
     }
 
     navigate("/results", {
-      state: { source: srcCoords, destination: destCoords, vehicle, destName: destination, avoidTolls },
+      state: { source: srcCoords, destination: destCoords, vehicle, destName: destination, sourceName: source, avoidTolls },
     });
   };
 

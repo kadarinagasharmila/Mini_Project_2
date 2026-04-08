@@ -15,6 +15,7 @@ const RouteResults = () => {
     destination: [number, number];
     vehicle: string;
     destName: string;
+    sourceName?: string;
     avoidTolls: boolean;
   } | null;
 
