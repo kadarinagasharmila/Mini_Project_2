@@ -16,21 +16,31 @@ serve(async (req) => {
     const now = new Date();
     const hour = now.getHours();
     const day = now.toLocaleDateString("en-US", { weekday: "long" });
+    const vehicle = routeInfo?.vehicle || "car";
 
-    const prompt = `You are a Telangana traffic analysis AI. Current time: ${now.toLocaleTimeString("en-IN")} on ${day}.
+    const vehicleContext: Record<string, string> = {
+      car: "The user is driving a car. Consider toll roads, fuel costs, parking at destination, and car-specific traffic patterns.",
+      bike: "The user is riding a motorcycle/bike. Consider lane splitting possibilities, road surface quality, two-wheeler specific hazards like potholes, and areas with heavy two-wheeler traffic. Bikes are less affected by car traffic jams.",
+      bus: "The user is taking a public bus (TSRTC/city bus). Consider bus stop locations, frequency of buses on this route, typical bus delays, crowding during peak hours, and last bus timings. Bus routes are fixed and slower due to frequent stops.",
+      walk: "The user is walking. Consider pedestrian-friendly paths, shade availability (important in Telangana heat), footpath conditions, safe crossing points, and approximate walking time. Traffic doesn't affect walking speed.",
+    };
+
+    const prompt = `You are a Telangana traffic and transport analysis AI. Current time: ${now.toLocaleTimeString("en-IN")} on ${day}.
     
 Route: ${routeInfo?.sourceName || "Current location"} to ${routeInfo?.destName || "Destination"}
 Distance: ${routeInfo?.distance || "unknown"} km
-Vehicle: ${routeInfo?.vehicle || "car"}
+Vehicle type: ${vehicle}
 Current hour: ${hour}
 
-Provide a brief traffic analysis (3-4 sentences max) covering:
-1. Current traffic conditions for this route
-2. Best departure time suggestion
-3. Any weather or event-related alerts for Telangana today
-4. One route optimization tip
+${vehicleContext[vehicle] || vehicleContext.car}
 
-Keep it concise and actionable for a driver in Telangana.`;
+Provide a specific, actionable analysis (4-5 sentences) for this ${vehicle} journey covering:
+1. Current ${vehicle === "bus" ? "bus service conditions and expected wait times" : vehicle === "bike" ? "road conditions for two-wheelers" : vehicle === "walk" ? "walking conditions and safety" : "traffic conditions"} for this route
+2. ${vehicle === "bus" ? "Which bus numbers serve this route and their frequency" : vehicle === "walk" ? "Best walking path and estimated time" : "Best departure time suggestion"}
+3. ${vehicle === "bus" ? "Expected crowding level and estimated total journey time including wait" : vehicle === "bike" ? "Road surface and safety alerts for riders" : "Weather or event-related alerts for Telangana today"}
+4. One specific ${vehicle}-optimized tip for this route in Telangana
+
+Be specific to Hyderabad/Telangana roads, landmarks, and transport systems. Mention actual road names and areas.`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -39,9 +49,9 @@ Keep it concise and actionable for a driver in Telangana.`;
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: "google/gemini-2.5-flash",
         messages: [
-          { role: "system", content: "You are a helpful Telangana traffic advisor. Be concise and specific to the region." },
+          { role: "system", content: `You are a Telangana transport advisor specializing in ${vehicle} travel. Be concise, specific to the region, and give practical advice. Always mention actual Hyderabad landmarks and road names.` },
           { role: "user", content: prompt },
         ],
       }),
@@ -55,7 +65,7 @@ Keep it concise and actionable for a driver in Telangana.`;
         });
       }
       if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "AI credits exhausted. Add funds in Settings > Workspace > Usage." }), {
+        return new Response(JSON.stringify({ error: "AI credits exhausted." }), {
           status: 402,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
