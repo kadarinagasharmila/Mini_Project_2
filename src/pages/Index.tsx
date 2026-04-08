@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import MapView from "@/components/MapView";
 import SearchBar from "@/components/SearchBar";
 import MapControls from "@/components/MapControls";
-import BottomNav from "@/components/BottomNav";
+
 import { getTrafficCounts, predictTrafficForArea } from "@/services/trafficPrediction";
 import { Sparkles } from "lucide-react";
 
@@ -59,7 +59,7 @@ const Index = () => {
         </div>
       </div>
 
-      <BottomNav />
+      
     </div>
   );
 };

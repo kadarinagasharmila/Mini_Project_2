@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { Star, MapPin, Navigation, Home, Briefcase, Plus, Trash2 } from "lucide-react";
-import BottomNav from "@/components/BottomNav";
+
 
 const favoriteLocations = [
   { id: 1, name: "Home", address: "Road No. 12, Banjara Hills", icon: Home, category: "home" },
@@ -76,7 +76,7 @@ const Favorites = () => {
         </div>
       </div>
 
-      <BottomNav />
+      
     </div>
   );
 };

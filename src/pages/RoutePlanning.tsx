@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Car, Bike, Bus, Footprints, MapPin, Clock, Search, Sparkles } from "lucide-react";
-import BottomNav from "@/components/BottomNav";
+
 import { geocodeLocation, getOptimalDeparture, TELANGANA_LOCATIONS } from "@/services/routingService";
 
 const vehicleTypes = [
@@ -195,7 +195,7 @@ const RoutePlanning = () => {
         </div>
       </div>
 
-      <BottomNav />
+      
     </div>
   );
 };

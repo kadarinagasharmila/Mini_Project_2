@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { ArrowLeft, Clock, MapPin, Navigation, Share2, Star, IndianRupee, Sparkles, Loader2, Brain } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import MapView from "@/components/MapView";
-import BottomNav from "@/components/BottomNav";
+
 import { getRoute, RouteResult } from "@/services/routingService";
 import { supabase } from "@/integrations/supabase/client";
 import L from "leaflet";
@@ -223,7 +223,7 @@ const RouteResults = () => {
         </div>
       </div>
 
-      <BottomNav />
+      
     </div>
   );
 };
