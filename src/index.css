@@ -1,8 +1,8 @@
+@import "leaflet/dist/leaflet.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
 
 @layer base {
   :root {
@@ -96,6 +96,11 @@
     @apply bg-card rounded-full shadow-lg touch-target transition-transform active:scale-95;
     box-shadow: 0 2px 8px hsl(var(--foreground) / 0.15);
   }
+}
+
+.leaflet-container {
+  width: 100% !important;
+  height: 100% !important;
 }
 
 @layer utilities {

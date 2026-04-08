@@ -1,6 +1,6 @@
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 // Fix default marker icon
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
@@ -14,18 +14,26 @@ L.Icon.Default.mergeOptions({
   shadowUrl: markerShadow,
 });
 
-// Hyderabad center
 const HYDERABAD_CENTER: [number, number] = [17.385, 78.4867];
+
+const InvalidateSize = () => {
+  const map = useMap();
+  useEffect(() => {
+    // Fix tiles not loading fully
+    setTimeout(() => map.invalidateSize(), 100);
+    setTimeout(() => map.invalidateSize(), 500);
+    const handleResize = () => map.invalidateSize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [map]);
+  return null;
+};
 
 const LocationMarker = ({ position }: { position?: [number, number] }) => {
   const map = useMap();
-
   useEffect(() => {
-    if (position) {
-      map.setView(position, 14);
-    }
+    if (position) map.setView(position, 14);
   }, [position, map]);
-
   if (!position) return null;
 
   const icon = L.divIcon({
@@ -45,9 +53,7 @@ const LocationMarker = ({ position }: { position?: [number, number] }) => {
 const FitBounds = ({ bounds }: { bounds?: L.LatLngBoundsExpression }) => {
   const map = useMap();
   useEffect(() => {
-    if (bounds) {
-      map.fitBounds(bounds, { padding: [50, 50] });
-    }
+    if (bounds) map.fitBounds(bounds, { padding: [50, 50] });
   }, [bounds, map]);
   return null;
 };
@@ -60,22 +66,24 @@ interface MapViewProps {
   bounds?: L.LatLngBoundsExpression;
 }
 
-const MapView = ({ userLocation, className = "", routeCoords, destination, bounds }: MapViewProps) => {
-  const destIcon = L.divIcon({
-    className: "custom-marker",
-    html: `<div style="width:16px;height:16px;background:hsl(0,72%,51%);border:3px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>`,
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
-  });
+const destIconObj = L.divIcon({
+  className: "custom-marker",
+  html: `<div style="width:16px;height:16px;background:hsl(0,72%,51%);border:3px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>`,
+  iconSize: [16, 16],
+  iconAnchor: [8, 8],
+});
 
+const MapView = ({ userLocation, className = "", routeCoords, destination, bounds }: MapViewProps) => {
   return (
     <MapContainer
       center={userLocation || HYDERABAD_CENTER}
       zoom={12}
-      className={`w-full h-full ${className}`}
+      style={{ width: "100%", height: "100%", position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}
+      className={className}
       zoomControl={false}
       attributionControl={false}
     >
+      <InvalidateSize />
       <TileLayer
         url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
@@ -84,7 +92,7 @@ const MapView = ({ userLocation, className = "", routeCoords, destination, bound
       />
       <LocationMarker position={userLocation} />
       {destination && (
-        <Marker position={destination} icon={destIcon}>
+        <Marker position={destination} icon={destIconObj}>
           <Popup>Destination</Popup>
         </Marker>
       )}
