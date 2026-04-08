@@ -1,6 +1,7 @@
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, CircleMarker } from "react-leaflet";
 import L from "leaflet";
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
 // Fix default marker icon
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
@@ -16,10 +17,37 @@ L.Icon.Default.mergeOptions({
 
 const HYDERABAD_CENTER: [number, number] = [17.385, 78.4867];
 
+interface Incident {
+  id: string;
+  type: string;
+  description: string | null;
+  latitude: number;
+  longitude: number;
+  severity: string;
+  created_at: string;
+}
+
+const INCIDENT_COLORS: Record<string, string> = {
+  accident: "#ef4444",
+  construction: "#f97316",
+  police: "#3b82f6",
+  flood: "#06b6d4",
+  pothole: "#eab308",
+  other: "#8b5cf6",
+};
+
+const INCIDENT_LABELS: Record<string, string> = {
+  accident: "🚨 Accident",
+  construction: "🚧 Construction",
+  police: "👮 Police",
+  flood: "🌊 Flooding",
+  pothole: "⚠️ Pothole",
+  other: "📍 Incident",
+};
+
 const InvalidateSize = () => {
   const map = useMap();
   useEffect(() => {
-    // Fix tiles not loading fully
     setTimeout(() => map.invalidateSize(), 100);
     setTimeout(() => map.invalidateSize(), 500);
     const handleResize = () => map.invalidateSize();
@@ -64,6 +92,7 @@ interface MapViewProps {
   routeCoords?: [number, number][];
   destination?: [number, number];
   bounds?: L.LatLngBoundsExpression;
+  showIncidents?: boolean;
 }
 
 const destIconObj = L.divIcon({
@@ -73,7 +102,66 @@ const destIconObj = L.divIcon({
   iconAnchor: [8, 8],
 });
 
-const MapView = ({ userLocation, className = "", routeCoords, destination, bounds }: MapViewProps) => {
+const IncidentMarkers = () => {
+  const [incidents, setIncidents] = useState<Incident[]>([]);
+
+  useEffect(() => {
+    // Fetch existing incidents
+    const fetchIncidents = async () => {
+      const { data } = await supabase
+        .from("traffic_incidents")
+        .select("*")
+        .gte("expires_at", new Date().toISOString());
+      if (data) setIncidents(data as Incident[]);
+    };
+    fetchIncidents();
+
+    // Subscribe to realtime changes
+    const channel = supabase
+      .channel("incidents-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "traffic_incidents" },
+        () => fetchIncidents()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  return (
+    <>
+      {incidents.map((inc) => (
+        <CircleMarker
+          key={inc.id}
+          center={[inc.latitude, inc.longitude]}
+          radius={inc.severity === "high" ? 12 : inc.severity === "medium" ? 9 : 6}
+          pathOptions={{
+            color: INCIDENT_COLORS[inc.type] || INCIDENT_COLORS.other,
+            fillColor: INCIDENT_COLORS[inc.type] || INCIDENT_COLORS.other,
+            fillOpacity: 0.6,
+            weight: 2,
+          }}
+        >
+          <Popup>
+            <div className="text-xs">
+              <p className="font-semibold">{INCIDENT_LABELS[inc.type] || inc.type}</p>
+              {inc.description && <p className="mt-1">{inc.description}</p>}
+              <p className="text-muted-foreground mt-1 capitalize">Severity: {inc.severity}</p>
+              <p className="text-muted-foreground">
+                {new Date(inc.created_at).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true })}
+              </p>
+            </div>
+          </Popup>
+        </CircleMarker>
+      ))}
+    </>
+  );
+};
+
+const MapView = ({ userLocation, className = "", routeCoords, destination, bounds, showIncidents = true }: MapViewProps) => {
   return (
     <MapContainer
       center={userLocation || HYDERABAD_CENTER}
@@ -103,6 +191,7 @@ const MapView = ({ userLocation, className = "", routeCoords, destination, bound
         />
       )}
       {bounds && <FitBounds bounds={bounds} />}
+      {showIncidents && <IncidentMarkers />}
     </MapContainer>
   );
 };

@@ -80,6 +80,42 @@ export type Database = {
         }
         Relationships: []
       }
+      traffic_incidents: {
+        Row: {
+          created_at: string
+          description: string | null
+          expires_at: string
+          id: string
+          latitude: number
+          longitude: number
+          severity: string
+          type: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          expires_at?: string
+          id?: string
+          latitude: number
+          longitude: number
+          severity?: string
+          type?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          expires_at?: string
+          id?: string
+          latitude?: number
+          longitude?: number
+          severity?: string
+          type?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
