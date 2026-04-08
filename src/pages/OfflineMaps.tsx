@@ -1,6 +1,6 @@
 import { ArrowLeft, Download, Trash2, Wifi } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import BottomNav from "@/components/BottomNav";
+
 
 const regions = [
   { name: "Hyderabad City", size: "145 MB", downloaded: true },
@@ -62,7 +62,7 @@ const OfflineMaps = () => {
         </div>
       </div>
 
-      <BottomNav />
+      
     </div>
   );
 };

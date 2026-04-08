@@ -1,6 +1,6 @@
 import { User, Car, Globe, Bell, Download, ChevronRight, LogOut, Info, LogIn } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import BottomNav from "@/components/BottomNav";
+
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 
@@ -103,7 +103,7 @@ const Profile = () => {
         )}
       </div>
 
-      <BottomNav />
+      
     </div>
   );
 };

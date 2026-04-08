@@ -13,10 +13,10 @@ const BottomNav = () => {
   const navigate = useNavigate();
 
   // Hide during active navigation
-  if (location.pathname === "/navigate") return null;
+  if (location.pathname === "/navigate" || location.pathname === "/auth") return null;
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border safe-bottom">
+    <nav className="fixed bottom-0 left-0 right-0 z-[1000] bg-card border-t border-border safe-bottom">
       <div className="flex items-center justify-around max-w-lg mx-auto">
         {navItems.map(({ path, icon: Icon, label }) => {
           const isActive = location.pathname === path;

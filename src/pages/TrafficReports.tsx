@@ -1,6 +1,6 @@
 import { ArrowLeft, AlertTriangle, Construction, CloudRain, Car } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import BottomNav from "@/components/BottomNav";
+
 
 const incidents = [
   { id: 1, type: "accident", title: "Accident on ORR near Gachibowli", time: "15 min ago", severity: "heavy", icon: Car },
@@ -48,7 +48,7 @@ const TrafficReports = () => {
         </div>
       </div>
 
-      <BottomNav />
+      
     </div>
   );
 };
