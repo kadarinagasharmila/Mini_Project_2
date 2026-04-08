@@ -1,5 +1,8 @@
-import { User, Car, Globe, Bell, Download, Moon, ChevronRight, LogOut, Info } from "lucide-react";
+import { User, Car, Globe, Bell, Download, ChevronRight, LogOut, Info, LogIn } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import BottomNav from "@/components/BottomNav";
+import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "sonner";
 
 const settingsGroups = [
   {
@@ -20,6 +23,15 @@ const settingsGroups = [
 ];
 
 const Profile = () => {
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
+
+  const handleSignOut = async () => {
+    await signOut();
+    toast.success("Signed out successfully");
+    navigate("/");
+  };
+
   return (
     <div className="min-h-screen bg-background pb-20">
       {/* Profile Header */}
@@ -29,11 +41,39 @@ const Profile = () => {
             <User className="w-8 h-8 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-lg font-bold text-primary-foreground">Guest User</h1>
-            <p className="text-xs text-primary-foreground/70">Sign in to save your data</p>
+            {user ? (
+              <>
+                <h1 className="text-lg font-bold text-primary-foreground">
+                  {user.user_metadata?.full_name || user.email?.split("@")[0]}
+                </h1>
+                <p className="text-xs text-primary-foreground/70">{user.email}</p>
+              </>
+            ) : (
+              <>
+                <h1 className="text-lg font-bold text-primary-foreground">Guest User</h1>
+                <button
+                  onClick={() => navigate("/auth")}
+                  className="text-xs text-primary-foreground/70 underline mt-0.5"
+                >
+                  Sign in to save your data
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Sign In Button for Guests */}
+      {!user && (
+        <div className="px-4 pt-4">
+          <button
+            onClick={() => navigate("/auth")}
+            className="w-full bg-primary text-primary-foreground py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2"
+          >
+            <LogIn className="w-4 h-4" /> Sign In / Create Account
+          </button>
+        </div>
+      )}
 
       {/* Settings */}
       <div className="px-4 pt-4 space-y-6">
@@ -53,9 +93,14 @@ const Profile = () => {
           </div>
         ))}
 
-        <button className="w-full flex items-center justify-center gap-2 py-3 text-destructive text-sm font-medium">
-          <LogOut className="w-4 h-4" /> Sign Out
-        </button>
+        {user && (
+          <button
+            onClick={handleSignOut}
+            className="w-full flex items-center justify-center gap-2 py-3 text-destructive text-sm font-medium"
+          >
+            <LogOut className="w-4 h-4" /> Sign Out
+          </button>
+        )}
       </div>
 
       <BottomNav />
