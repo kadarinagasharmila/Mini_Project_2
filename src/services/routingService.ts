@@ -1,6 +1,5 @@
-// OpenRouteService API - free tier, no key required for basic routing
-const ORS_BASE = "https://api.openrouteservice.org/v2";
-const ORS_API_KEY = "5b3ce3597851110001cf6248b6b0c1c4a87b4c5e9c0d5e5e5e5e5e5e"; // Public demo key
+// OSRM public API - free, no key required, no CORS issues
+const OSRM_BASE = "https://router.project-osrm.org/route/v1";
 
 // Telangana locations geocoding database
 export const TELANGANA_LOCATIONS: Record<string, [number, number]> = {
@@ -71,151 +70,94 @@ export interface RouteStep {
 // Geocode a location name to coordinates
 export function geocodeLocation(name: string): [number, number] | null {
   const normalized = name.toLowerCase().trim();
-  
-  // Direct match
-  if (TELANGANA_LOCATIONS[normalized]) {
-    return TELANGANA_LOCATIONS[normalized];
-  }
-  
-  // Partial match
+  if (TELANGANA_LOCATIONS[normalized]) return TELANGANA_LOCATIONS[normalized];
   for (const [key, coords] of Object.entries(TELANGANA_LOCATIONS)) {
-    if (key.includes(normalized) || normalized.includes(key)) {
-      return coords;
-    }
+    if (key.includes(normalized) || normalized.includes(key)) return coords;
   }
-  
   return null;
 }
 
-// Decode ORS polyline geometry
+// Decode OSRM polyline (precision 5)
 function decodePolyline(encoded: string): [number, number][] {
   const coords: [number, number][] = [];
-  let index = 0;
-  let lat = 0;
-  let lng = 0;
-
+  let index = 0, lat = 0, lng = 0;
   while (index < encoded.length) {
-    let b: number;
-    let shift = 0;
-    let result = 0;
-    do {
-      b = encoded.charCodeAt(index++) - 63;
-      result |= (b & 0x1f) << shift;
-      shift += 5;
-    } while (b >= 0x20);
-    const dlat = result & 1 ? ~(result >> 1) : result >> 1;
-    lat += dlat;
-
-    shift = 0;
-    result = 0;
-    do {
-      b = encoded.charCodeAt(index++) - 63;
-      result |= (b & 0x1f) << shift;
-      shift += 5;
-    } while (b >= 0x20);
-    const dlng = result & 1 ? ~(result >> 1) : result >> 1;
-    lng += dlng;
-
+    let b: number, shift = 0, result = 0;
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lat += result & 1 ? ~(result >> 1) : result >> 1;
+    shift = 0; result = 0;
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lng += result & 1 ? ~(result >> 1) : result >> 1;
     coords.push([lat / 1e5, lng / 1e5]);
   }
-
   return coords;
 }
 
-const STEP_ICONS: Record<number, string> = {
-  0: "↑", 1: "→", 2: "↗", 3: "↘", 4: "←", 5: "↙", 6: "↑", 
-  7: "↑", 8: "↰", 9: "↱", 10: "⟳", 11: "📍", 12: "↑", 13: "↑",
+const MANEUVER_ICONS: Record<string, string> = {
+  "turn-right": "→", "turn-left": "←", "turn-sharp-right": "↗", "turn-sharp-left": "↙",
+  "turn-slight-right": "↗", "turn-slight-left": "↙", "straight": "↑", "depart": "↑",
+  "arrive": "📍", "roundabout": "⟳", "rotary": "⟳", "merge": "↑", "fork": "↗",
+  "end of road": "→", "continue": "↑", "new name": "↑", "ramp": "↗",
 };
 
-// Get route from OpenRouteService
+// Get route from OSRM (free public API)
 export async function getRoute(
   start: [number, number],
   end: [number, number],
   profile: string = "driving-car"
 ): Promise<RouteResult[]> {
-  const profileMap: Record<string, string> = {
-    car: "driving-car",
-    bike: "cycling-regular",
-    bus: "driving-car",
-    walk: "foot-walking",
-  };
-
-  const orsProfile = profileMap[profile] || "driving-car";
+  const osrmProfile = profile === "walk" ? "foot" : profile === "bike" ? "bike" : "car";
 
   try {
-    const response = await fetch(
-      `${ORS_BASE}/directions/${orsProfile}?api_key=${ORS_API_KEY}&start=${start[1]},${start[0]}&end=${end[1]},${end[0]}`
-    );
+    // Request alternatives=true for multiple routes
+    const url = `${OSRM_BASE}/${osrmProfile === "car" ? "driving" : osrmProfile === "bike" ? "cycling" : "walking"}/${start[1]},${start[0]};${end[1]},${end[0]}?overview=full&geometries=polyline&steps=true&alternatives=3`;
 
-    if (!response.ok) {
-      throw new Error(`ORS API error: ${response.status}`);
-    }
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`OSRM error: ${response.status}`);
 
     const data = await response.json();
-    const feature = data.features?.[0];
+    if (data.code !== "Ok" || !data.routes?.length) throw new Error("No route found");
 
-    if (!feature) {
-      throw new Error("No route found");
+    const results: RouteResult[] = data.routes.map((route: any, idx: number) => {
+      const distanceKm = route.distance / 1000;
+      const durationMin = Math.round(route.duration / 60);
+      const geometry = decodePolyline(route.geometry);
+      const traffic = predictTraffic(distanceKm, durationMin);
+
+      const steps: RouteStep[] = route.legs[0].steps.map((step: any) => ({
+        instruction: step.maneuver.instruction || step.name || "Continue",
+        distance: step.distance > 1000
+          ? `${(step.distance / 1000).toFixed(1)} km`
+          : `${Math.round(step.distance)} m`,
+        duration: step.duration > 60
+          ? `${Math.round(step.duration / 60)} min`
+          : `${Math.round(step.duration)} sec`,
+        icon: MANEUVER_ICONS[step.maneuver.type] || "↑",
+      }));
+
+      const hasToll = distanceKm > 15;
+      const tollCost = hasToll ? Math.round(distanceKm * 2.5) : 0;
+
+      return {
+        distance: Math.round(distanceKm * 10) / 10,
+        duration: durationMin,
+        geometry,
+        steps,
+        toll: idx === 0 && tollCost > 0 ? `₹${tollCost}` : "Free",
+        trafficLevel: traffic.level,
+        trafficColor: traffic.color,
+      };
+    });
+
+    // If API only returned 1 route, generate alternatives
+    if (results.length === 1) {
+      results.push(
+        { ...results[0], distance: Math.round(results[0].distance * 0.85 * 10) / 10, duration: Math.round(results[0].duration * 1.3), toll: "Free", trafficLevel: "Moderate traffic", trafficColor: "text-traffic-moderate" },
+        { ...results[0], distance: Math.round(results[0].distance * 0.75 * 10) / 10, duration: Math.round(results[0].duration * 1.6), toll: "Free", trafficLevel: "Heavy traffic", trafficColor: "text-traffic-heavy" },
+      );
     }
 
-    const props = feature.properties;
-    const segment = props.segments[0];
-    const distanceKm = (props.summary.distance / 1000);
-    const durationMin = Math.round(props.summary.duration / 60);
-
-    // Convert GeoJSON coordinates [lng, lat] to [lat, lng]
-    const geometry: [number, number][] = feature.geometry.coordinates.map(
-      (c: number[]) => [c[1], c[0]] as [number, number]
-    );
-
-    const steps: RouteStep[] = segment.steps.map((step: any) => ({
-      instruction: step.instruction,
-      distance: step.distance > 1000 
-        ? `${(step.distance / 1000).toFixed(1)} km` 
-        : `${Math.round(step.distance)} m`,
-      duration: step.duration > 60 
-        ? `${Math.round(step.duration / 60)} min` 
-        : `${Math.round(step.duration)} sec`,
-      icon: STEP_ICONS[step.type] || "↑",
-    }));
-
-    // Estimate toll based on distance (rough Telangana toll estimation)
-    const hasToll = distanceKm > 15;
-    const tollCost = hasToll ? Math.round(distanceKm * 2.5) : 0;
-
-    // AI traffic prediction
-    const traffic = predictTraffic(distanceKm, durationMin);
-
-    const mainRoute: RouteResult = {
-      distance: Math.round(distanceKm * 10) / 10,
-      duration: durationMin,
-      geometry,
-      steps,
-      toll: tollCost > 0 ? `₹${tollCost}` : "Free",
-      trafficLevel: traffic.level,
-      trafficColor: traffic.color,
-    };
-
-    // Generate alternative routes with slight variations
-    const altRoute1: RouteResult = {
-      ...mainRoute,
-      distance: Math.round((distanceKm * 0.85) * 10) / 10,
-      duration: Math.round(durationMin * 1.3),
-      toll: "Free",
-      trafficLevel: "Moderate traffic",
-      trafficColor: "text-traffic-moderate",
-    };
-
-    const altRoute2: RouteResult = {
-      ...mainRoute,
-      distance: Math.round((distanceKm * 0.75) * 10) / 10,
-      duration: Math.round(durationMin * 1.6),
-      toll: "Free",
-      trafficLevel: "Heavy traffic",
-      trafficColor: "text-traffic-heavy",
-    };
-
-    return [mainRoute, altRoute1, altRoute2];
+    return results.slice(0, 3);
   } catch (error) {
     console.error("Routing error, using fallback:", error);
     return getFallbackRoute(start, end);
@@ -227,34 +169,39 @@ function getFallbackRoute(start: [number, number], end: [number, number]): Route
   const R = 6371;
   const dLat = ((end[0] - start[0]) * Math.PI) / 180;
   const dLon = ((end[1] - start[1]) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos((start[0] * Math.PI) / 180) *
-      Math.cos((end[0] * Math.PI) / 180) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  const straightLine = R * c;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos((start[0] * Math.PI) / 180) * Math.cos((end[0] * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  const straightLine = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   const roadDistance = straightLine * 1.4;
   const duration = Math.round(roadDistance / 0.6);
-
   const traffic = predictTraffic(roadDistance, duration);
 
-  const geometry: [number, number][] = [start, end];
+  // Create a simple curved geometry through a midpoint
+  const midLat = (start[0] + end[0]) / 2;
+  const midLng = (start[1] + end[1]) / 2;
+  const offset = straightLine * 0.001;
+
+  const mainGeometry: [number, number][] = [start, [midLat + offset, midLng - offset], end];
+  const altGeometry1: [number, number][] = [start, [midLat - offset, midLng + offset], end];
+  const altGeometry2: [number, number][] = [start, [midLat + offset * 2, midLng], end];
+
+  const baseRoute: RouteResult = {
+    distance: Math.round(roadDistance * 10) / 10,
+    duration,
+    geometry: mainGeometry,
+    steps: [
+      { instruction: "Head toward destination", distance: `${Math.round(roadDistance)} km`, duration: `${duration} min`, icon: "↑" },
+      { instruction: "Continue on main road", distance: `${Math.round(roadDistance * 0.6)} km`, duration: `${Math.round(duration * 0.6)} min`, icon: "↑" },
+      { instruction: "Arrive at destination", distance: "", duration: "", icon: "📍" },
+    ],
+    toll: roadDistance > 15 ? `₹${Math.round(roadDistance * 2.5)}` : "Free",
+    trafficLevel: traffic.level,
+    trafficColor: traffic.color,
+  };
 
   return [
-    {
-      distance: Math.round(roadDistance * 10) / 10,
-      duration,
-      geometry,
-      steps: [
-        { instruction: "Head toward destination", distance: `${Math.round(roadDistance)} km`, duration: `${duration} min`, icon: "↑" },
-        { instruction: "Arrive at destination", distance: "", duration: "", icon: "📍" },
-      ],
-      toll: roadDistance > 15 ? `₹${Math.round(roadDistance * 2.5)}` : "Free",
-      trafficLevel: traffic.level,
-      trafficColor: traffic.color,
-    },
+    baseRoute,
+    { ...baseRoute, geometry: altGeometry1, distance: Math.round(roadDistance * 0.85 * 10) / 10, duration: Math.round(duration * 1.3), toll: "Free", trafficLevel: "Moderate traffic", trafficColor: "text-traffic-moderate" },
+    { ...baseRoute, geometry: altGeometry2, distance: Math.round(roadDistance * 0.75 * 10) / 10, duration: Math.round(duration * 1.6), toll: "Free", trafficLevel: "Heavy traffic", trafficColor: "text-traffic-heavy" },
   ];
 }
 
@@ -266,22 +213,13 @@ function predictTraffic(distanceKm: number, baseDuration: number): { level: stri
   const isWeekend = day === 0 || day === 6;
 
   let multiplier = 1.0;
-
   if (!isWeekend) {
-    // Morning rush: 8-10 AM
     if (hour >= 8 && hour <= 10) multiplier = 1.6;
-    // Evening rush: 5-8 PM
     else if (hour >= 17 && hour <= 20) multiplier = 1.8;
-    // Moderate: 10 AM - 5 PM
     else if (hour >= 10 && hour <= 17) multiplier = 1.2;
-    // Light: early morning, late night
-    else multiplier = 1.0;
   } else {
     if (hour >= 10 && hour <= 18) multiplier = 1.15;
-    else multiplier = 1.0;
   }
-
-  // Distance factor - longer routes through city have more traffic
   if (distanceKm > 20) multiplier *= 1.1;
 
   if (multiplier <= 1.1) return { level: "Light traffic", color: "text-traffic-free", multiplier };
@@ -298,16 +236,8 @@ export function getOptimalDeparture(distanceKm: number): string {
   const isWeekend = day === 0 || day === 6;
 
   if (isWeekend) return "Current time is good — light weekend traffic expected";
-
-  if (hour >= 7 && hour <= 9) {
-    return "Consider departing after 10:00 AM to avoid morning rush";
-  }
-  if (hour >= 16 && hour <= 19) {
-    return "Heavy evening traffic now — depart after 8:30 PM for 40% less travel time";
-  }
-  if (hour >= 10 && hour <= 16) {
-    return "Good time to travel — moderate traffic expected";
-  }
-
+  if (hour >= 7 && hour <= 9) return "Consider departing after 10:00 AM to avoid morning rush";
+  if (hour >= 16 && hour <= 19) return "Heavy evening traffic now — depart after 8:30 PM for 40% less travel time";
+  if (hour >= 10 && hour <= 16) return "Good time to travel — moderate traffic expected";
   return "Low traffic expected at this hour — good time to depart";
 }
