@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Car, Bike, Bus, Footprints, MapPin, Clock, Search, Sparkles } from "lucide-react";
+import { ArrowLeft, Car, Bike, Bus, Footprints, MapPin, Clock, Search, Sparkles, Loader2 } from "lucide-react";
 
-import { geocodeLocation, getOptimalDeparture, TELANGANA_LOCATIONS } from "@/services/routingService";
+import { geocodeLocation, getOptimalDeparture, getPlaceAutocomplete, getPlaceDetails, PlacePrediction } from "@/services/routingService";
 
 const vehicleTypes = [
   { id: "car", icon: Car, label: "Car" },
@@ -26,25 +26,29 @@ const RoutePlanning = () => {
   const [avoidTolls, setAvoidTolls] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [suggestions, setSuggestions] = useState<PlacePrediction[]>([]);
+  const [sourceSuggestions, setSourceSuggestions] = useState<PlacePrediction[]>([]);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const sourceDebounceRef = useRef<ReturnType<typeof setTimeout>>();
 
   const aiSuggestion = getOptimalDeparture(20);
 
   const handleSearch = async () => {
     if (!destination) return;
-
-    const destCoords = geocodeLocation(destination);
-    if (!destCoords) {
-      setError(`Location "${destination}" not found in Telangana. Try: ${Object.keys(TELANGANA_LOCATIONS).slice(0, 5).join(", ")}`);
-      return;
-    }
-
     setError("");
     setLoading(true);
+
+    const destCoords = await geocodeLocation(destination);
+    if (!destCoords) {
+      setError(`Location "${destination}" not found. Try a different search term.`);
+      setLoading(false);
+      return;
+    }
 
     // Get user location or default to Hyderabad center
     let srcCoords: [number, number] = [17.385, 78.4867];
     if (source && source !== "My Location") {
-      const sc = geocodeLocation(source);
+      const sc = await geocodeLocation(source);
       if (sc) srcCoords = sc;
     } else {
       try {
@@ -60,12 +64,34 @@ const RoutePlanning = () => {
     });
   };
 
-  // Filter suggestions based on input
-  const suggestions = destination.length >= 2
-    ? Object.keys(TELANGANA_LOCATIONS).filter(loc => 
-        loc.includes(destination.toLowerCase()) && loc !== destination.toLowerCase()
-      ).slice(0, 4)
-    : [];
+  // Autocomplete for destination
+  const handleDestChange = (val: string) => {
+    setDestination(val);
+    setError("");
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (val.length >= 2) {
+      debounceRef.current = setTimeout(async () => {
+        const preds = await getPlaceAutocomplete(val);
+        setSuggestions(preds);
+      }, 300);
+    } else {
+      setSuggestions([]);
+    }
+  };
+
+  // Autocomplete for source
+  const handleSourceChange = (val: string) => {
+    setSource(val);
+    if (sourceDebounceRef.current) clearTimeout(sourceDebounceRef.current);
+    if (val.length >= 2 && val !== "My Location") {
+      sourceDebounceRef.current = setTimeout(async () => {
+        const preds = await getPlaceAutocomplete(val);
+        setSourceSuggestions(preds);
+      }, 300);
+    } else {
+      setSourceSuggestions([]);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background flex flex-col pb-20">
@@ -79,31 +105,45 @@ const RoutePlanning = () => {
             <div className="w-2.5 h-2.5 rounded-full bg-secondary" />
             <input
               value={source}
-              onChange={(e) => setSource(e.target.value)}
+              onChange={(e) => handleSourceChange(e.target.value)}
               placeholder="Your location"
               className="flex-1 bg-transparent text-primary-foreground placeholder:text-primary-foreground/60 text-sm outline-none"
             />
           </div>
-          <div className="relative">
+          {sourceSuggestions.length > 0 && (
+            <div className="bg-card rounded-lg shadow-lg overflow-hidden mt-1">
+              {sourceSuggestions.map((s) => (
+                <button
+                  key={s.placeId}
+                  onClick={() => { setSource(s.description); setSourceSuggestions([]); }}
+                  className="w-full text-left px-3 py-2.5 text-sm text-foreground hover:bg-muted flex items-center gap-2"
+                >
+                  <MapPin className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  <span className="truncate">{s.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="relative mt-2">
             <div className="flex items-center gap-3 bg-primary-foreground/15 rounded-lg px-3 py-2.5">
               <div className="w-2.5 h-2.5 rounded-full bg-destructive" />
               <input
                 value={destination}
-                onChange={(e) => { setDestination(e.target.value); setError(""); }}
+                onChange={(e) => handleDestChange(e.target.value)}
                 placeholder="Where to? (e.g. Charminar, Hitech City)"
                 className="flex-1 bg-transparent text-primary-foreground placeholder:text-primary-foreground/60 text-sm outline-none"
               />
             </div>
             {suggestions.length > 0 && (
               <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-card rounded-lg shadow-lg overflow-hidden">
-                {suggestions.map((loc) => (
+                {suggestions.map((s) => (
                   <button
-                    key={loc}
-                    onClick={() => { setDestination(loc.charAt(0).toUpperCase() + loc.slice(1)); }}
+                    key={s.placeId}
+                    onClick={() => { setDestination(s.description); setSuggestions([]); }}
                     className="w-full text-left px-3 py-2.5 text-sm text-foreground hover:bg-muted flex items-center gap-2"
                   >
-                    <MapPin className="w-3.5 h-3.5 text-muted-foreground" />
-                    {loc.charAt(0).toUpperCase() + loc.slice(1)}
+                    <MapPin className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <span className="truncate">{s.description}</span>
                   </button>
                 ))}
               </div>
@@ -165,7 +205,7 @@ const RoutePlanning = () => {
           className="w-full bg-primary text-primary-foreground py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-transform disabled:opacity-50"
         >
           {loading ? (
-            <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
+            <Loader2 className="w-4 h-4 animate-spin" />
           ) : (
             <Search className="w-4 h-4" />
           )}
@@ -173,23 +213,17 @@ const RoutePlanning = () => {
         </button>
       </div>
 
-      {/* Recent Searches */}
+      {/* Quick Places */}
       <div className="px-4 pt-2">
-        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Recent</h3>
-        <div className="space-y-0.5">
-          {recentSearches.map((item) => (
+        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Popular</h3>
+        <div className="flex flex-wrap gap-2">
+          {["Charminar", "Hitech City", "Gachibowli", "Secunderabad", "LB Nagar", "Golconda Fort"].map((place) => (
             <button
-              key={item.name}
-              onClick={() => setDestination(item.name)}
-              className="w-full flex items-center gap-3 py-3 px-1 hover:bg-muted rounded-lg transition-colors"
+              key={place}
+              onClick={() => handleDestChange(place)}
+              className="bg-muted text-muted-foreground px-3 py-1.5 rounded-full text-xs font-medium hover:bg-primary/10 hover:text-primary transition-colors"
             >
-              <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center">
-                <MapPin className="w-4 h-4 text-muted-foreground" />
-              </div>
-              <div className="text-left">
-                <p className="text-sm font-medium text-foreground">{item.name}</p>
-                <p className="text-xs text-muted-foreground">{item.subtitle}</p>
-              </div>
+              {place}
             </button>
           ))}
         </div>
