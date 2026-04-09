@@ -68,7 +68,7 @@ const RouteResults = () => {
     fetchRoutes();
   }, []);
 
-  const routeNames = ["Via ORR (Recommended)", "Via NH65", "Via Inner Ring Road"];
+  const routeNames = routes.map((r, i) => r.summary || (i === 0 ? "Recommended" : `Route ${i + 1}`));
 
   const currentRoute = routes[selectedRoute];
   const bounds = currentRoute?.geometry?.length
