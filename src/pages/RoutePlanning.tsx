@@ -11,13 +11,6 @@ const vehicleTypes = [
   { id: "walk", icon: Footprints, label: "Walk" },
 ];
 
-const recentSearches = [
-  { name: "Charminar", subtitle: "Old City, Hyderabad" },
-  { name: "Hitech City", subtitle: "Madhapur, Hyderabad" },
-  { name: "Warangal Fort", subtitle: "Warangal, Telangana" },
-  { name: "Shamirpet Lake", subtitle: "Shamirpet, Hyderabad" },
-];
-
 const RoutePlanning = () => {
   const navigate = useNavigate();
   const [vehicle, setVehicle] = useState("car");
