@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Volume2, VolumeX, Star, MapPin, Locate } from "lucide-react";
+import { Volume2, VolumeX, Star, MapPin, Locate, Navigation, ChevronDown, ChevronUp } from "lucide-react";
 import MapView from "@/components/MapView";
-import { RouteResult } from "@/services/routingService";
+import { RouteResult, WeatherData } from "@/services/routingService";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
@@ -16,7 +16,6 @@ function haversineM(a: [number, number], b: [number, number]): number {
   return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 }
 
-// Find closest step index based on position
 function findClosestStep(pos: [number, number], geometry: [number, number][], totalSteps: number): number {
   let minDist = Infinity;
   let closestIdx = 0;
@@ -39,6 +38,7 @@ const ActiveNavigation = () => {
     sourceCoords?: [number, number];
     destCoords?: [number, number];
     vehicle?: string;
+    weather?: WeatherData | null;
   } | null;
 
   const [muted, setMuted] = useState(false);
@@ -47,15 +47,18 @@ const ActiveNavigation = () => {
   const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
   const [gpsActive, setGpsActive] = useState(false);
   const [distanceTraveled, setDistanceTraveled] = useState(0);
+  const [showSteps, setShowSteps] = useState(false);
   const speechRef = useRef<SpeechSynthesisUtterance | null>(null);
   const watchIdRef = useRef<number | null>(null);
   const lastPosRef = useRef<[number, number] | null>(null);
   const lastSpokenStepRef = useRef(-1);
+  const arrivedRef = useRef(false);
 
   const route = state?.route;
   const destName = state?.destName || "Destination";
   const sourceName = state?.sourceName || "Current Location";
   const vehicle = state?.vehicle || "car";
+  const weather = state?.weather;
 
   const steps = route?.steps || [
     { instruction: "Head toward destination", distance: "", duration: "", icon: "↑" },
@@ -65,9 +68,8 @@ const ActiveNavigation = () => {
   const totalDuration = route?.duration || 0;
   const totalDistance = route?.distance || 0;
 
-  // Calculate remaining distance/time based on GPS progress
   const remainingDistance = Math.max(0, totalDistance - distanceTraveled);
-  const avgSpeed = totalDistance > 0 ? totalDuration / totalDistance : 1; // min per km
+  const avgSpeed = totalDistance > 0 ? totalDuration / totalDistance : 1;
   const remainingDuration = Math.max(0, Math.round(remainingDistance * avgSpeed));
   const eta = new Date(Date.now() + remainingDuration * 60000).toLocaleTimeString("en-IN", {
     hour: "numeric", minute: "2-digit", hour12: true,
@@ -80,6 +82,7 @@ const ActiveNavigation = () => {
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "en-IN";
     utterance.rate = 0.9;
+    utterance.pitch = 1.0;
     speechRef.current = utterance;
     window.speechSynthesis.speak(utterance);
   }, [muted]);
@@ -90,9 +93,19 @@ const ActiveNavigation = () => {
     lastSpokenStepRef.current = currentStep;
     const step = steps[currentStep];
     if (step) {
-      const msg = step.distance
+      let msg = step.distance
         ? `In ${step.distance}, ${step.instruction}`
         : step.instruction;
+
+      // Add transit details for bus mode
+      if (step.transitDetails) {
+        const td = step.transitDetails;
+        if (td.lineName) msg += `. Take ${td.vehicleType || "bus"} number ${td.lineName}`;
+        if (td.departureStop) msg += ` from ${td.departureStop}`;
+        if (td.arrivalStop) msg += ` to ${td.arrivalStop}`;
+        if (td.numStops) msg += `. ${td.numStops} stops.`;
+      }
+
       speak(msg);
     }
   }, [currentStep, speak, steps]);
@@ -101,7 +114,6 @@ const ActiveNavigation = () => {
   useEffect(() => {
     if (!route?.geometry?.length) return;
 
-    // Set initial position to route start
     setGpsPosition(route.geometry[0]);
 
     if (!navigator.geolocation) {
@@ -109,7 +121,6 @@ const ActiveNavigation = () => {
       return;
     }
 
-    // Start watching position
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
         const newPos: [number, number] = [pos.coords.latitude, pos.coords.longitude];
@@ -117,24 +128,22 @@ const ActiveNavigation = () => {
         setGpsAccuracy(pos.coords.accuracy);
         setGpsActive(true);
 
-        // Track distance traveled
         if (lastPosRef.current) {
           const moved = haversineM(lastPosRef.current, newPos);
-          if (moved > 5 && moved < 500) { // filter noise (>5m) and teleports (<500m)
+          if (moved > 5 && moved < 500) {
             setDistanceTraveled((prev) => prev + moved / 1000);
           }
         }
         lastPosRef.current = newPos;
 
-        // Update current step based on proximity to route
         if (route.geometry.length > 0) {
           const newStep = findClosestStep(newPos, route.geometry, steps.length);
           setCurrentStep((prev) => Math.max(prev, newStep));
 
-          // Check if arrived (within 50m of destination)
           const destDist = haversineM(newPos, route.geometry[route.geometry.length - 1]);
-          if (destDist < 50) {
-            speak(`You have arrived at ${destName}`);
+          if (destDist < 50 && !arrivedRef.current) {
+            arrivedRef.current = true;
+            speak(`You have arrived at ${destName}. ${weather ? `Current weather: ${weather.temperature} degrees, ${weather.condition}.` : ""}`);
             toast.success(`Arrived at ${destName}!`);
           }
         }
@@ -145,14 +154,19 @@ const ActiveNavigation = () => {
           toast.error("Location access denied. Enable GPS for real-time tracking.");
         }
       },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 3000,
-        timeout: 10000,
-      }
+      { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 }
     );
 
-    speak(`Starting navigation to ${destName}. ${vehicle === "bus" ? "Bus route" : vehicle === "bike" ? "Cycling route" : vehicle === "walk" ? "Walking route" : "Driving"} — ${totalDuration} minutes, ${totalDistance} kilometers.`);
+    // Welcome announcement with weather + vehicle context
+    const vehicleLabel = vehicle === "bus" ? "Bus route" : vehicle === "bike" ? "Two-wheeler route" : vehicle === "walk" ? "Walking route" : "Driving";
+    let welcomeMsg = `Starting navigation to ${destName}. ${vehicleLabel} — ${totalDuration} minutes, ${totalDistance} kilometers.`;
+    if (weather) {
+      welcomeMsg += ` Weather at destination: ${weather.temperature} degrees, ${weather.condition}.`;
+      if (weather.drivingWarning) {
+        welcomeMsg += ` Warning: ${weather.drivingWarning}`;
+      }
+    }
+    speak(welcomeMsg);
 
     return () => {
       if (watchIdRef.current !== null) {
@@ -191,7 +205,7 @@ const ActiveNavigation = () => {
     }
   };
 
-  const vehicleEmoji = vehicle === "bus" ? "🚌" : vehicle === "bike" ? "🚲" : vehicle === "walk" ? "🚶" : "🚗";
+  const vehicleEmoji = vehicle === "bus" ? "🚌" : vehicle === "bike" ? "🏍️" : vehicle === "walk" ? "🚶" : "🚗";
 
   return (
     <div className="h-screen w-screen relative">
@@ -214,12 +228,29 @@ const ActiveNavigation = () => {
             {muted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
           </button>
         </div>
+
+        {/* Transit details for bus */}
+        {steps[currentStep]?.transitDetails && (
+          <div className="bg-primary-foreground/10 rounded-lg px-3 py-2 text-xs mb-2">
+            <div className="flex items-center gap-2">
+              <span className="font-bold">🚌 {steps[currentStep].transitDetails?.lineName}</span>
+              {steps[currentStep].transitDetails?.departureStop && (
+                <span>from {steps[currentStep].transitDetails?.departureStop}</span>
+              )}
+            </div>
+            {steps[currentStep].transitDetails?.numStops && (
+              <span className="text-primary-foreground/60">{steps[currentStep].transitDetails?.numStops} stops</span>
+            )}
+          </div>
+        )}
+
         {currentStep + 1 < steps.length && (
           <div className="bg-primary-foreground/10 rounded-lg px-3 py-2 text-xs truncate">
             Then: {steps[currentStep + 1]?.instruction}
           </div>
         )}
-        {/* GPS Status */}
+
+        {/* GPS + Weather Status */}
         <div className="flex items-center gap-2 mt-2 text-xs text-primary-foreground/60">
           <Locate className={`w-3 h-3 ${gpsActive ? "text-green-300" : "text-primary-foreground/40"}`} />
           <span>
@@ -227,12 +258,58 @@ const ActiveNavigation = () => {
               ? `GPS active · ${gpsAccuracy ? `±${Math.round(gpsAccuracy)}m` : "Tracking"}`
               : "Waiting for GPS..."}
           </span>
+          {weather && (
+            <span className="ml-1">{weather.emoji} {weather.temperature}°C</span>
+          )}
           <span className="ml-auto">{vehicleEmoji} {vehicle.charAt(0).toUpperCase() + vehicle.slice(1)}</span>
         </div>
       </div>
 
+      {/* Steps List Toggle */}
+      <button
+        onClick={() => setShowSteps(!showSteps)}
+        className="absolute bottom-[120px] right-4 z-[500] bg-card shadow-lg rounded-full w-10 h-10 flex items-center justify-center"
+      >
+        {showSteps ? <ChevronDown className="w-5 h-5 text-foreground" /> : <ChevronUp className="w-5 h-5 text-foreground" />}
+      </button>
+
+      {/* Steps Panel */}
+      {showSteps && (
+        <div className="absolute bottom-[170px] left-4 right-4 z-[500] bg-card rounded-xl shadow-lg max-h-[40vh] overflow-y-auto p-3">
+          <h3 className="text-xs font-semibold text-muted-foreground mb-2">ALL STEPS</h3>
+          <div className="space-y-2">
+            {steps.map((step, i) => (
+              <div
+                key={i}
+                className={`flex items-start gap-2 text-xs p-2 rounded-lg ${
+                  i === currentStep ? "bg-primary/10 text-primary font-medium" : i < currentStep ? "text-muted-foreground line-through opacity-50" : "text-foreground"
+                }`}
+              >
+                <span className="text-base shrink-0">{step.icon}</span>
+                <div className="min-w-0">
+                  <p className="truncate">{step.instruction}</p>
+                  <p className="text-[10px] text-muted-foreground">{step.distance} · {step.duration}</p>
+                  {step.transitDetails && (
+                    <p className="text-[10px] text-primary">
+                      🚌 {step.transitDetails.lineName} · {step.transitDetails.numStops} stops
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Bottom Info */}
       <div className="absolute bottom-0 left-0 right-0 z-[500] bg-card p-4 safe-bottom">
+        {/* Weather warning */}
+        {weather?.drivingWarning && (
+          <div className="bg-destructive/10 text-destructive text-[10px] px-3 py-1.5 rounded-lg mb-2 flex items-center gap-1">
+            <span>⚠️</span>
+            <span>{weather.drivingWarning}</span>
+          </div>
+        )}
         <div className="flex items-center justify-between mb-3">
           <div>
             <p className="text-2xl font-bold text-foreground">

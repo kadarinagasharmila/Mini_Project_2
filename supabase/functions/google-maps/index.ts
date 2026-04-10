@@ -69,14 +69,66 @@ serve(async (req) => {
       });
     }
 
+    // --- Weather (Open-Meteo, no key needed) ---
+    if (action === "weather") {
+      const { lat, lng } = body;
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,visibility&timezone=Asia/Kolkata`;
+      const res = await fetch(url);
+      const data = await res.json();
+      const current = data.current;
+
+      const weatherCodes: Record<number, string> = {
+        0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
+        45: "Foggy", 48: "Rime fog", 51: "Light drizzle", 53: "Moderate drizzle",
+        55: "Dense drizzle", 61: "Light rain", 63: "Moderate rain", 65: "Heavy rain",
+        71: "Light snow", 73: "Moderate snow", 75: "Heavy snow", 77: "Snow grains",
+        80: "Light showers", 81: "Moderate showers", 82: "Heavy showers",
+        85: "Light snow showers", 86: "Heavy snow showers",
+        95: "Thunderstorm", 96: "Thunderstorm with hail", 99: "Severe thunderstorm",
+      };
+
+      const weatherEmoji: Record<number, string> = {
+        0: "☀️", 1: "🌤️", 2: "⛅", 3: "☁️", 45: "🌫️", 48: "🌫️",
+        51: "🌦️", 53: "🌧️", 55: "🌧️", 61: "🌧️", 63: "🌧️", 65: "🌧️",
+        71: "🌨️", 73: "🌨️", 75: "🌨️", 80: "🌦️", 81: "🌧️", 82: "⛈️",
+        95: "⛈️", 96: "⛈️", 99: "⛈️",
+      };
+
+      const code = current?.weather_code ?? 0;
+      const weather = {
+        temperature: current?.temperature_2m,
+        feelsLike: current?.apparent_temperature,
+        humidity: current?.relative_humidity_2m,
+        precipitation: current?.precipitation,
+        windSpeed: current?.wind_speed_10m,
+        visibility: current?.visibility ? Math.round(current.visibility / 1000) : null,
+        condition: weatherCodes[code] || "Unknown",
+        emoji: weatherEmoji[code] || "🌡️",
+        code,
+        isRainy: [51, 53, 55, 61, 63, 65, 80, 81, 82].includes(code),
+        isStormy: [95, 96, 99].includes(code),
+        isFoggy: [45, 48].includes(code),
+        drivingWarning: getDrivingWarning(code, current?.wind_speed_10m, current?.visibility),
+      };
+
+      return new Response(JSON.stringify({ weather }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // --- Directions (multiple routes) ---
     if (action === "directions") {
-      const { origin, destination, mode } = body;
-      // mode: driving, walking, bicycling, transit
+      const { origin, destination, mode, avoidTolls } = body;
       const gMode = mode === "bike" ? "bicycling" : mode === "bus" ? "transit" : mode === "walk" ? "walking" : "driving";
       const originStr = `${origin[0]},${origin[1]}`;
       const destStr = `${destination[0]},${destination[1]}`;
-      const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${originStr}&destination=${destStr}&mode=${gMode}&alternatives=true&departure_time=now&traffic_model=best_guess&key=${API_KEY}`;
+      
+      let url = `https://maps.googleapis.com/maps/api/directions/json?origin=${originStr}&destination=${destStr}&mode=${gMode}&alternatives=true&departure_time=now&traffic_model=best_guess&key=${API_KEY}`;
+      
+      if (avoidTolls && gMode === "driving") {
+        url += "&avoid=tolls";
+      }
+
       const res = await fetch(url);
       const data = await res.json();
 
@@ -92,10 +144,8 @@ serve(async (req) => {
         const durationMin = Math.round((leg.duration_in_traffic?.value || leg.duration.value) / 60);
         const normalDuration = Math.round(leg.duration.value / 60);
 
-        // Decode polyline
         const geometry = decodePolyline(route.overview_polyline.points);
 
-        // Steps
         const steps = leg.steps.map((step: any) => ({
           instruction: step.html_instructions?.replace(/<[^>]*>/g, "") || "Continue",
           distance: step.distance.text,
@@ -108,10 +158,13 @@ serve(async (req) => {
             departureStop: step.transit_details.departure_stop?.name,
             arrivalStop: step.transit_details.arrival_stop?.name,
             numStops: step.transit_details.num_stops,
+            departureTime: step.transit_details.departure_time?.text,
+            arrivalTime: step.transit_details.arrival_time?.text,
+            headSign: step.transit_details.headsign,
+            color: step.transit_details.line?.color,
           } : undefined,
         }));
 
-        // Traffic level based on duration vs normal
         const ratio = durationMin / normalDuration;
         let trafficLevel: string, trafficColor: string;
         if (ratio <= 1.1) { trafficLevel = "Light traffic"; trafficColor = "text-traffic-free"; }
@@ -119,13 +172,27 @@ serve(async (req) => {
         else if (ratio <= 1.6) { trafficLevel = "Heavy traffic"; trafficColor = "text-traffic-heavy"; }
         else { trafficLevel = "Severe traffic"; trafficColor = "text-traffic-severe"; }
 
-        // Tolls
         const hasToll = route.warnings?.some((w: string) => w.toLowerCase().includes("toll")) ||
                         leg.steps?.some((s: any) => s.html_instructions?.toLowerCase().includes("toll"));
         const toll = hasToll ? `₹${Math.round(distanceKm * 2.5)}` : "Free";
 
-        // Route summary
         const summary = route.summary || `Route ${idx + 1}`;
+
+        // Vehicle-specific extras
+        const vehicleInfo: Record<string, any> = {};
+        if (gMode === "transit") {
+          vehicleInfo.transitSummary = steps
+            .filter((s: any) => s.transitDetails)
+            .map((s: any) => `${s.transitDetails.vehicleType || "Bus"} ${s.transitDetails.lineName || ""} → ${s.transitDetails.arrivalStop || ""}`)
+            .join(" | ");
+        }
+        if (gMode === "bicycling") {
+          vehicleInfo.bikeNote = "Two-wheeler route. Watch for potholes and speed breakers.";
+        }
+        if (gMode === "walking") {
+          vehicleInfo.walkNote = `Walking route. Stay hydrated in Telangana heat.`;
+          vehicleInfo.calories = Math.round(distanceKm * 65); // ~65 cal/km walking
+        }
 
         return {
           distance: Math.round(distanceKm * 10) / 10,
@@ -137,6 +204,7 @@ serve(async (req) => {
           trafficColor,
           vehicleType: mode || "car",
           summary,
+          vehicleInfo,
           warnings: route.warnings || [],
         };
       });
@@ -156,6 +224,16 @@ serve(async (req) => {
     });
   }
 });
+
+function getDrivingWarning(code: number, windSpeed?: number, visibility?: number): string | null {
+  const warnings: string[] = [];
+  if ([61, 63, 65, 80, 81, 82].includes(code)) warnings.push("🌧️ Wet roads — drive carefully, reduce speed");
+  if ([95, 96, 99].includes(code)) warnings.push("⛈️ Thunderstorm — avoid travel if possible");
+  if ([45, 48].includes(code)) warnings.push("🌫️ Low visibility — use fog lights");
+  if (visibility && visibility < 2000) warnings.push("⚠️ Very low visibility — extra caution needed");
+  if (windSpeed && windSpeed > 40) warnings.push("💨 Strong winds — two-wheelers be cautious");
+  return warnings.length > 0 ? warnings.join(". ") : null;
+}
 
 function decodePolyline(encoded: string): [number, number][] {
   const coords: [number, number][] = [];

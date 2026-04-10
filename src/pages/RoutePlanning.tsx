@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Car, Bike, Bus, Footprints, MapPin, Clock, Search, Sparkles, Loader2 } from "lucide-react";
+import { ArrowLeft, Car, Bike, Bus, Footprints, MapPin, Clock, Search, Sparkles, Loader2, LocateFixed } from "lucide-react";
 
-import { geocodeLocation, getOptimalDeparture, getPlaceAutocomplete, getPlaceDetails, PlacePrediction } from "@/services/routingService";
+import { geocodeLocation, getOptimalDeparture, getPlaceAutocomplete, getPlaceDetails, getUserLocation, PlacePrediction } from "@/services/routingService";
+import { toast } from "sonner";
 
 const vehicleTypes = [
   { id: "car", icon: Car, label: "Car" },
@@ -21,6 +22,9 @@ const RoutePlanning = () => {
   const [error, setError] = useState("");
   const [suggestions, setSuggestions] = useState<PlacePrediction[]>([]);
   const [sourceSuggestions, setSourceSuggestions] = useState<PlacePrediction[]>([]);
+  const [selectedSourcePlaceId, setSelectedSourcePlaceId] = useState<string | null>(null);
+  const [selectedDestPlaceId, setSelectedDestPlaceId] = useState<string | null>(null);
+  const [locatingGps, setLocatingGps] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
   const sourceDebounceRef = useRef<ReturnType<typeof setTimeout>>();
 
@@ -31,35 +35,73 @@ const RoutePlanning = () => {
     setError("");
     setLoading(true);
 
-    const destCoords = await geocodeLocation(destination);
-    if (!destCoords) {
-      setError(`Location "${destination}" not found. Try a different search term.`);
+    try {
+      // Resolve destination coords
+      let destCoords: [number, number] | null = null;
+      if (selectedDestPlaceId) {
+        const details = await getPlaceDetails(selectedDestPlaceId);
+        if (details) destCoords = [details.lat, details.lng];
+      }
+      if (!destCoords) {
+        destCoords = await geocodeLocation(destination);
+      }
+      if (!destCoords) {
+        setError(`Location "${destination}" not found. Try a different search term.`);
+        setLoading(false);
+        return;
+      }
+
+      // Resolve source coords
+      let srcCoords: [number, number] | null = null;
+      if (source === "My Location") {
+        try {
+          srcCoords = await getUserLocation();
+        } catch {
+          toast.error("Could not get your location. Using Hyderabad center.");
+          srcCoords = [17.385, 78.4867];
+        }
+      } else if (selectedSourcePlaceId) {
+        const details = await getPlaceDetails(selectedSourcePlaceId);
+        if (details) srcCoords = [details.lat, details.lng];
+      }
+      if (!srcCoords) {
+        srcCoords = await geocodeLocation(source);
+      }
+      if (!srcCoords) {
+        setError(`Source location "${source}" not found.`);
+        setLoading(false);
+        return;
+      }
+
+      navigate("/results", {
+        state: { source: srcCoords, destination: destCoords, vehicle, destName: destination, sourceName: source, avoidTolls },
+      });
+    } catch (err) {
+      setError("Something went wrong. Please try again.");
+    } finally {
       setLoading(false);
-      return;
     }
+  };
 
-    // Get user location or default to Hyderabad center
-    let srcCoords: [number, number] = [17.385, 78.4867];
-    if (source && source !== "My Location") {
-      const sc = await geocodeLocation(source);
-      if (sc) srcCoords = sc;
-    } else {
-      try {
-        const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
-          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 3000 })
-        );
-        srcCoords = [pos.coords.latitude, pos.coords.longitude];
-      } catch {}
+  const handleUseMyLocation = async () => {
+    setLocatingGps(true);
+    try {
+      await getUserLocation();
+      setSource("My Location");
+      setSelectedSourcePlaceId(null);
+      setSourceSuggestions([]);
+      toast.success("Using your current location");
+    } catch {
+      toast.error("Could not access GPS. Please enable location services.");
+    } finally {
+      setLocatingGps(false);
     }
-
-    navigate("/results", {
-      state: { source: srcCoords, destination: destCoords, vehicle, destName: destination, sourceName: source, avoidTolls },
-    });
   };
 
   // Autocomplete for destination
   const handleDestChange = (val: string) => {
     setDestination(val);
+    setSelectedDestPlaceId(null);
     setError("");
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (val.length >= 2) {
@@ -75,6 +117,7 @@ const RoutePlanning = () => {
   // Autocomplete for source
   const handleSourceChange = (val: string) => {
     setSource(val);
+    setSelectedSourcePlaceId(null);
     if (sourceDebounceRef.current) clearTimeout(sourceDebounceRef.current);
     if (val.length >= 2 && val !== "My Location") {
       sourceDebounceRef.current = setTimeout(async () => {
@@ -94,21 +137,39 @@ const RoutePlanning = () => {
           <ArrowLeft className="w-5 h-5 text-primary-foreground" />
         </button>
         <div className="space-y-2">
-          <div className="flex items-center gap-3 bg-primary-foreground/15 rounded-lg px-3 py-2.5">
-            <div className="w-2.5 h-2.5 rounded-full bg-secondary" />
-            <input
-              value={source}
-              onChange={(e) => handleSourceChange(e.target.value)}
-              placeholder="Your location"
-              className="flex-1 bg-transparent text-primary-foreground placeholder:text-primary-foreground/60 text-sm outline-none"
-            />
+          <div className="flex items-center gap-2">
+            <div className="flex-1 flex items-center gap-3 bg-primary-foreground/15 rounded-lg px-3 py-2.5">
+              <div className="w-2.5 h-2.5 rounded-full bg-secondary" />
+              <input
+                value={source}
+                onChange={(e) => handleSourceChange(e.target.value)}
+                placeholder="Your location"
+                className="flex-1 bg-transparent text-primary-foreground placeholder:text-primary-foreground/60 text-sm outline-none"
+              />
+            </div>
+            <button
+              onClick={handleUseMyLocation}
+              disabled={locatingGps}
+              className="shrink-0 bg-primary-foreground/15 rounded-lg p-2.5 text-primary-foreground hover:bg-primary-foreground/25 transition-colors"
+              title="Use my location"
+            >
+              {locatingGps ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <LocateFixed className="w-4 h-4" />
+              )}
+            </button>
           </div>
           {sourceSuggestions.length > 0 && (
             <div className="bg-card rounded-lg shadow-lg overflow-hidden mt-1">
               {sourceSuggestions.map((s) => (
                 <button
                   key={s.placeId}
-                  onClick={() => { setSource(s.description); setSourceSuggestions([]); }}
+                  onClick={() => {
+                    setSource(s.description);
+                    setSelectedSourcePlaceId(s.placeId);
+                    setSourceSuggestions([]);
+                  }}
                   className="w-full text-left px-3 py-2.5 text-sm text-foreground hover:bg-muted flex items-center gap-2"
                 >
                   <MapPin className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
@@ -132,7 +193,11 @@ const RoutePlanning = () => {
                 {suggestions.map((s) => (
                   <button
                     key={s.placeId}
-                    onClick={() => { setDestination(s.description); setSuggestions([]); }}
+                    onClick={() => {
+                      setDestination(s.description);
+                      setSelectedDestPlaceId(s.placeId);
+                      setSuggestions([]);
+                    }}
                     className="w-full text-left px-3 py-2.5 text-sm text-foreground hover:bg-muted flex items-center gap-2"
                   >
                     <MapPin className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
@@ -213,7 +278,10 @@ const RoutePlanning = () => {
           {["Charminar", "Hitech City", "Gachibowli", "Secunderabad", "LB Nagar", "Golconda Fort"].map((place) => (
             <button
               key={place}
-              onClick={() => handleDestChange(place)}
+              onClick={() => {
+                setDestination(place);
+                setSelectedDestPlaceId(null);
+              }}
               className="bg-muted text-muted-foreground px-3 py-1.5 rounded-full text-xs font-medium hover:bg-primary/10 hover:text-primary transition-colors"
             >
               {place}
@@ -221,8 +289,6 @@ const RoutePlanning = () => {
           ))}
         </div>
       </div>
-
-      
     </div>
   );
 };
