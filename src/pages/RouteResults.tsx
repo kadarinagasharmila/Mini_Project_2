@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
-import { ArrowLeft, Clock, MapPin, Navigation, Share2, Star, IndianRupee, Sparkles, Loader2, Brain } from "lucide-react";
+import { ArrowLeft, Clock, MapPin, Navigation, Share2, Star, IndianRupee, Sparkles, Loader2, Brain, Cloud, Thermometer, Bus, Bike, Footprints } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import MapView from "@/components/MapView";
 
-import { getRoute, RouteResult } from "@/services/routingService";
+import { getRoute, getWeather, RouteResult, WeatherData } from "@/services/routingService";
 import { supabase } from "@/integrations/supabase/client";
 import L from "leaflet";
 
@@ -24,6 +24,7 @@ const RouteResults = () => {
   const [selectedRoute, setSelectedRoute] = useState(0);
   const [aiInsight, setAiInsight] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
+  const [weather, setWeather] = useState<WeatherData | null>(null);
 
   const source = state?.source || [17.385, 78.4867];
   const destination = state?.destination || [17.3616, 78.4747];
@@ -31,19 +32,17 @@ const RouteResults = () => {
   const vehicle = state?.vehicle || "car";
 
   useEffect(() => {
-    const fetchRoutes = async () => {
+    const fetchAll = async () => {
       setLoading(true);
-      const results = await getRoute(
-        source as [number, number],
-        destination as [number, number],
-        vehicle
-      );
-      if (state?.avoidTolls) {
-        results.forEach((r) => {
-          r.toll = "Free";
-        });
-      }
+
+      // Fetch routes and weather in parallel
+      const [results, weatherData] = await Promise.all([
+        getRoute(source as [number, number], destination as [number, number], vehicle, state?.avoidTolls || false),
+        getWeather(destination[0], destination[1]),
+      ]);
+
       setRoutes(results);
+      setWeather(weatherData);
       setLoading(false);
 
       // Fetch AI analysis
@@ -56,6 +55,7 @@ const RouteResults = () => {
               destName,
               distance: results[0]?.distance,
               vehicle,
+              weather: weatherData ? `${weatherData.condition}, ${weatherData.temperature}°C` : undefined,
             },
           },
         });
@@ -65,7 +65,7 @@ const RouteResults = () => {
       } catch {}
       setAiLoading(false);
     };
-    fetchRoutes();
+    fetchAll();
   }, []);
 
   const routeNames = routes.map((r, i) => r.summary || (i === 0 ? "Recommended" : `Route ${i + 1}`));
@@ -87,10 +87,12 @@ const RouteResults = () => {
     return eta.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true });
   };
 
+  const VehicleIcon = vehicle === "bus" ? Bus : vehicle === "bike" ? Bike : vehicle === "walk" ? Footprints : Navigation;
+
   return (
     <div className="h-screen flex flex-col">
       {/* Map Section */}
-      <div className="relative h-[45%]">
+      <div className="relative h-[40%]">
         <MapView
           userLocation={source as [number, number]}
           destination={destination as [number, number]}
@@ -106,7 +108,7 @@ const RouteResults = () => {
         <div className="absolute top-4 left-16 right-4 z-[500] floating-card px-3 py-2">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <div className="w-2 h-2 rounded-full bg-secondary" />
-            <span>Your location</span>
+            <span className="truncate">{state?.sourceName || "Your location"}</span>
             <span className="text-muted-foreground/50">→</span>
             <div className="w-2 h-2 rounded-full bg-destructive" />
             <span className="truncate">{destName}</span>
@@ -125,6 +127,29 @@ const RouteResults = () => {
             </div>
           ) : (
             <>
+              {/* Weather Card */}
+              {weather && (
+                <div className="bg-muted/50 rounded-xl p-3 mb-3 flex items-center gap-3">
+                  <span className="text-2xl">{weather.emoji}</span>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-foreground">{weather.temperature}°C</span>
+                      <span className="text-xs text-muted-foreground">{weather.condition}</span>
+                    </div>
+                    <div className="flex gap-3 text-[10px] text-muted-foreground mt-0.5">
+                      <span>Feels {weather.feelsLike}°C</span>
+                      <span>💧 {weather.humidity}%</span>
+                      <span>💨 {weather.windSpeed} km/h</span>
+                    </div>
+                  </div>
+                  {weather.drivingWarning && (
+                    <div className="bg-destructive/10 text-destructive text-[10px] px-2 py-1 rounded-lg max-w-[120px]">
+                      {weather.drivingWarning.split(".")[0]}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <h2 className="text-base font-semibold text-foreground mb-3">
                 {routes.length} route{routes.length !== 1 ? "s" : ""} found
               </h2>
@@ -188,7 +213,30 @@ const RouteResults = () => {
                         <IndianRupee className="w-3 h-3" />
                         {route.toll}
                       </span>
+                      <span className="flex items-center gap-1">
+                        <VehicleIcon className="w-3 h-3" />
+                        {vehicle.charAt(0).toUpperCase() + vehicle.slice(1)}
+                      </span>
                     </div>
+
+                    {/* Vehicle-specific info */}
+                    {route.vehicleInfo?.transitSummary && (
+                      <div className="mt-2 bg-muted/50 rounded-lg px-2 py-1.5 text-[10px] text-muted-foreground flex items-center gap-1">
+                        <Bus className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{route.vehicleInfo.transitSummary}</span>
+                      </div>
+                    )}
+                    {route.vehicleInfo?.calories && (
+                      <div className="mt-2 text-[10px] text-muted-foreground">
+                        🔥 ~{route.vehicleInfo.calories} calories burned
+                      </div>
+                    )}
+                    {route.vehicleInfo?.bikeNote && (
+                      <div className="mt-2 text-[10px] text-muted-foreground">
+                        🏍️ {route.vehicleInfo.bikeNote}
+                      </div>
+                    )}
+
                     {idx === selectedRoute && (
                       <div className="flex gap-2 mt-3">
                         <button
@@ -202,12 +250,13 @@ const RouteResults = () => {
                                 sourceCoords: source,
                                 destCoords: destination,
                                 vehicle,
+                                weather,
                               },
                             });
                           }}
                           className="flex-1 bg-primary text-primary-foreground py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1"
                         >
-                          <Navigation className="w-3.5 h-3.5" /> Start
+                          <Navigation className="w-3.5 h-3.5" /> Start Navigation
                         </button>
                         <button
                           onClick={(e) => e.stopPropagation()}
@@ -230,8 +279,6 @@ const RouteResults = () => {
           )}
         </div>
       </div>
-
-      
     </div>
   );
 };
