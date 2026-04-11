@@ -10,8 +10,9 @@ serve(async (req) => {
 
   try {
     const { routeInfo, location } = await req.json();
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    const aiGatewayApiKey = Deno.env.get("AI_GATEWAY_API_KEY") ?? Deno.env.get("LOVABLE_API_KEY");
+    const aiGatewayUrl = Deno.env.get("AI_GATEWAY_URL") ?? "https://ai.gateway.lovable.dev/v1/chat/completions";
+    if (!aiGatewayApiKey) throw new Error("AI gateway API key is not configured");
 
     const now = new Date();
     const hour = now.getHours();
@@ -42,10 +43,10 @@ Provide a specific, actionable analysis (4-5 sentences) for this ${vehicle} jour
 
 Be specific to Hyderabad/Telangana roads, landmarks, and transport systems. Mention actual road names and areas.`;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const response = await fetch(aiGatewayUrl, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        Authorization: `Bearer ${aiGatewayApiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="TelanganaMaps">
+  <defs>
+    <linearGradient id="bg" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38BDF8" />
+      <stop offset="1" stop-color="#2563EB" />
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="16" fill="url(#bg)" />
+  <path
+    d="M32 14c-7.18 0-13 5.82-13 13 0 9.69 10.35 20.48 12.22 22.33a1.1 1.1 0 0 0 1.56 0C34.65 47.48 45 36.69 45 27c0-7.18-5.82-13-13-13Zm0 18a5 5 0 1 1 0-10 5 5 0 0 1 0 10Z"
+    fill="#fff"
+  />
+  <path d="M17 50h30" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".92" />
+  <path d="M24 42h16" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".92" />
+</svg>

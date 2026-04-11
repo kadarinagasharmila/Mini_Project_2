@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
 import { ArrowLeft, Mail, Lock, User, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 
@@ -130,16 +129,16 @@ const Auth = () => {
 
         <button
           onClick={async () => {
-            const result = await lovable.auth.signInWithOAuth("google", {
-              redirect_uri: window.location.origin,
+            const { error } = await supabase.auth.signInWithOAuth({
+              provider: "google",
+              options: {
+                redirectTo: window.location.origin,
+              },
             });
-            if (result.error) {
+            if (error) {
               toast.error("Google sign-in failed");
               return;
             }
-            if (result.redirected) return;
-            toast.success("Signed in with Google!");
-            navigate("/");
           }}
           className="w-full floating-card py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-transform"
         >
