@@ -5,7 +5,7 @@ import MapControls from "@/components/MapControls";
 import ReportIncidentSheet from "@/components/ReportIncidentSheet";
 
 import { getTrafficCounts, predictTrafficForArea } from "@/services/trafficPrediction";
-import { Sparkles, AlertTriangle } from "lucide-react";
+import { Sparkles } from "lucide-react";
 
 const Index = () => {
   const [userLocation, setUserLocation] = useState<[number, number] | undefined>();
@@ -35,9 +35,19 @@ const Index = () => {
 
   return (
     <div className="h-screen w-screen relative overflow-hidden">
-      <MapView userLocation={userLocation} />
+      <MapView userLocation={userLocation} showIncidents={trafficOn} />
       <SearchBar />
-      <MapControls onLocate={handleLocate} trafficOn={trafficOn} onToggleTraffic={() => setTrafficOn(!trafficOn)} />
+      <MapControls
+        onLocate={handleLocate}
+        trafficOn={trafficOn}
+        onToggleTraffic={() => setTrafficOn(!trafficOn)}
+        onReportIncident={() => setReportOpen(true)}
+      />
+      <ReportIncidentSheet
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+        location={userLocation}
+      />
 
       {/* AI Traffic Bottom Sheet */}
       <div className="fixed bottom-16 left-0 right-0 z-[400] px-4 pb-2">
@@ -61,19 +71,6 @@ const Index = () => {
         </div>
       </div>
 
-      {/* Report Incident Button */}
-      <button
-        onClick={() => setReportOpen(true)}
-        className="fixed bottom-[7.5rem] right-4 z-[500] bg-destructive text-destructive-foreground w-12 h-12 rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
-      >
-        <AlertTriangle className="w-5 h-5" />
-      </button>
-
-      <ReportIncidentSheet
-        open={reportOpen}
-        onClose={() => setReportOpen(false)}
-        location={userLocation || [17.385, 78.4867]}
-      />
     </div>
   );
 };

@@ -6,57 +6,58 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 220 20% 10%;
+    --background: 210 34% 98%;
+    --foreground: 215 12% 12%;
 
     --card: 0 0% 100%;
-    --card-foreground: 220 20% 10%;
+    --card-foreground: 215 12% 12%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 220 20% 10%;
+    --popover-foreground: 215 12% 12%;
 
-    --primary: 217 91% 53%;
+    /* New cohesive palette: primary blue -> secondary teal */
+    --primary: 217 90% 45%; /* bright blue */
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 160 84% 29%;
+    --secondary: 173 72% 36%; /* teal */
     --secondary-foreground: 0 0% 100%;
 
-    --muted: 220 14% 96%;
-    --muted-foreground: 220 9% 46%;
+    --muted: 46 31% 92%;
+    --muted-foreground: 196 12% 37%;
 
-    --accent: 220 14% 96%;
-    --accent-foreground: 220 20% 10%;
+    --accent: 169 31% 90%;
+    --accent-foreground: 198 28% 14%;
 
-    --destructive: 0 72% 51%;
+    --destructive: 7 76% 54%;
     --destructive-foreground: 0 0% 100%;
 
-    --warning: 38 92% 50%;
-    --warning-foreground: 0 0% 100%;
+    --warning: 37 93% 56%;
+    --warning-foreground: 198 28% 14%;
 
-    --success: 160 84% 29%;
+    --success: 153 61% 34%;
     --success-foreground: 0 0% 100%;
 
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 217 91% 53%;
+    --border: 42 20% 84%;
+    --input: 42 20% 84%;
+    --ring: 174 77% 27%;
 
-    --radius: 0.75rem;
+    --radius: 1rem;
 
-    --traffic-free: 142 76% 36%;
-    --traffic-moderate: 38 92% 50%;
-    --traffic-heavy: 0 72% 51%;
-    --traffic-severe: 0 84% 32%;
+    --traffic-free: 153 61% 34%;
+    --traffic-moderate: 37 93% 56%;
+    --traffic-heavy: 12 82% 58%;
+    --traffic-severe: 2 72% 42%;
 
-    --map-overlay: 220 20% 10% / 0.6;
+    --map-overlay: 198 28% 14% / 0.62;
 
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-background: 46 35% 95%;
+    --sidebar-foreground: 198 28% 14%;
+    --sidebar-primary: 174 77% 27%;
     --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 4.8% 95.9%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-accent: 169 31% 90%;
+    --sidebar-accent-foreground: 198 28% 14%;
+    --sidebar-border: 42 20% 84%;
+    --sidebar-ring: 174 77% 27%;
   }
 }
 
@@ -67,25 +68,39 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-family: "Manrope", "Segoe UI", sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    background-image:
+      radial-gradient(circle at top left, hsl(169 31% 90% / 0.9), transparent 28%),
+      radial-gradient(circle at top right, hsl(40 88% 56% / 0.18), transparent 22%),
+      linear-gradient(180deg, hsl(var(--background)), hsl(45 36% 95%));
+    background-attachment: fixed;
   }
 
   h1, h2, h3, h4, h5, h6 {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: "Sora", "Manrope", sans-serif;
+    letter-spacing: -0.03em;
+  }
+
+  #root {
+    min-height: 100vh;
   }
 }
 
 @layer components {
   .bottom-sheet {
-    @apply bg-card rounded-t-2xl shadow-xl;
-    box-shadow: 0 -4px 24px hsl(var(--foreground) / 0.08);
+    @apply bg-card rounded-t-[1.75rem] shadow-xl;
+    background: linear-gradient(180deg, hsl(0 0% 100% / 0.98), hsl(46 30% 97% / 0.98));
+    box-shadow: 0 -10px 40px hsl(var(--foreground) / 0.1);
+    border-top: 1px solid hsl(var(--border));
   }
 
   .floating-card {
-    @apply bg-card rounded-xl;
-    box-shadow: 0 2px 12px hsl(var(--foreground) / 0.1);
+    @apply bg-card rounded-2xl;
+    background: linear-gradient(180deg, hsl(0 0% 100% / 0.96), hsl(48 38% 98% / 0.96));
+    border: 1px solid hsl(var(--border));
+    box-shadow: 0 10px 30px hsl(198 28% 14% / 0.08);
   }
 
   .touch-target {
@@ -94,8 +109,114 @@
 
   .map-control-btn {
     @apply bg-card rounded-full shadow-lg touch-target transition-transform active:scale-95;
-    box-shadow: 0 2px 8px hsl(var(--foreground) / 0.15);
+    background: linear-gradient(180deg, hsl(0 0% 100%), hsl(48 38% 97%));
+    border: 1px solid hsl(var(--border));
+    box-shadow: 0 6px 18px hsl(198 28% 14% / 0.12);
   }
+}
+
+/* Custom map marker and route styles */
+.user-marker-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #3b82f6, #1e40af);
+  border: 3px solid white;
+  box-shadow: 0 6px 18px rgba(30,64,175,0.28);
+  position: relative;
+}
+.user-marker-dot::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(66,133,244,0.16);
+  animation: pulse 2s infinite ease-out;
+}
+
+.dest-marker-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ef4444, #b91c1c);
+  border: 3px solid white;
+  box-shadow: 0 6px 18px rgba(185,28,28,0.18);
+}
+
+@keyframes pulse {
+  0% { transform: translate(-50%, -50%) scale(0.6); opacity: 0.9 }
+  70% { transform: translate(-50%, -50%) scale(1.4); opacity: 0 }
+  100% { transform: translate(-50%, -50%) scale(1.6); opacity: 0 }
+}
+
+.route-line {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.route-line-shadow {
+  filter: drop-shadow(0 8px 18px rgba(15, 23, 42, 0.22));
+}
+
+.route-line-main {
+  filter: drop-shadow(0 3px 8px rgba(26, 115, 232, 0.24));
+}
+
+.route-line-alternate {
+  filter: drop-shadow(0 2px 6px rgba(31, 41, 55, 0.16));
+}
+
+/* Route card and primary button styles */
+.route-card {
+  border-radius: 1rem;
+  padding: 1rem;
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+.route-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 18px 40px rgba(17,24,39,0.06);
+}
+
+.btn-primary {
+  background: linear-gradient(90deg, hsl(var(--primary)) 0%, hsl(var(--secondary)) 100%);
+  color: rgb(var(--primary-foreground));
+  box-shadow: 0 8px 24px rgba(30,64,175,0.12);
+}
+
+.btn-primary:hover {
+  filter: brightness(0.98);
+}
+
+/* Additional button styles */
+.btn-danger {
+  background: linear-gradient(90deg, hsl(357 88% 47%) 0%, hsl(360 74% 40%) 100%);
+  color: white;
+  box-shadow: 0 8px 20px rgba(220,38,38,0.12);
+}
+.btn-danger:hover { filter: brightness(0.96); }
+
+.btn-ghost {
+  background: transparent;
+  border: 1px solid hsl(var(--border));
+  color: hsl(var(--foreground));
+}
+.btn-ghost:hover { background: rgba(0,0,0,0.03); }
+
+.btn-warning {
+  background: linear-gradient(90deg, hsl(37 92% 54%) 0%, hsl(34 95% 58%) 100%);
+  color: rgb(var(--warning-foreground));
+}
+
+/* Toaster tweaks to match palette */
+.toaster .toast {
+  border-radius: 12px;
+  border: 1px solid hsl(var(--border));
+  box-shadow: 0 10px 30px rgba(2,6,23,0.08);
 }
 
 .leaflet-container {
@@ -106,5 +227,9 @@
 @layer utilities {
   .safe-bottom {
     padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+  }
+
+  .safe-top {
+    padding-top: max(env(safe-area-inset-top), 0.5rem);
   }
 }

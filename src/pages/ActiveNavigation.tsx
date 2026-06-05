@@ -1,10 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Volume2, VolumeX, Star, MapPin, Locate, Navigation, ChevronDown, ChevronUp } from "lucide-react";
+import { Volume2, VolumeX, Star, MapPin, Locate, Navigation, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, RotateCcw } from "lucide-react";
 import MapView from "@/components/MapView";
 import { RouteResult, WeatherData } from "@/services/routingService";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 
 // Haversine distance in meters
@@ -30,7 +28,6 @@ function findClosestStep(pos: [number, number], geometry: [number, number][], to
 const ActiveNavigation = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useAuth();
   const state = location.state as {
     route: RouteResult;
     destName: string;
@@ -48,22 +45,31 @@ const ActiveNavigation = () => {
   const [gpsActive, setGpsActive] = useState(false);
   const [distanceTraveled, setDistanceTraveled] = useState(0);
   const [showSteps, setShowSteps] = useState(false);
+  const [activeRoute, setActiveRoute] = useState<RouteResult | null>(state?.route ?? null);
   const speechRef = useRef<SpeechSynthesisUtterance | null>(null);
   const watchIdRef = useRef<number | null>(null);
   const lastPosRef = useRef<[number, number] | null>(null);
   const lastSpokenStepRef = useRef(-1);
   const arrivedRef = useRef(false);
 
-  const route = state?.route;
+  const route = activeRoute;
   const destName = state?.destName || "Destination";
   const sourceName = state?.sourceName || "Current Location";
   const vehicle = state?.vehicle || "car";
   const weather = state?.weather;
 
-  const steps = route?.steps || [
-    { instruction: "Head toward destination", distance: "", duration: "", icon: "↑" },
-    { instruction: `Arrive at ${destName}`, distance: "", duration: "", icon: "📍" },
-  ];
+  useEffect(() => {
+    setActiveRoute(state?.route ?? null);
+  }, [state?.route]);
+
+  const steps = useMemo(
+    () =>
+      route?.steps || [
+        { instruction: "Head toward destination", distance: "", duration: "", icon: "↑" },
+        { instruction: `Arrive at ${destName}`, distance: "", duration: "", icon: "📍" },
+      ],
+    [destName, route?.steps]
+  );
 
   const totalDuration = route?.duration || 0;
   const totalDistance = route?.distance || 0;
@@ -75,7 +81,7 @@ const ActiveNavigation = () => {
     hour: "numeric", minute: "2-digit", hour12: true,
   });
 
-  // Voice announcement
+  // Voice announcement - define first
   const speak = useCallback((text: string) => {
     if (muted || !("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
@@ -86,6 +92,27 @@ const ActiveNavigation = () => {
     speechRef.current = utterance;
     window.speechSynthesis.speak(utterance);
   }, [muted]);
+
+  // Reroute function - uses speak
+  const reroute = useCallback(async (currentPos: [number, number]) => {
+    if (!route) return;
+    try {
+      const { getRoute } = await import("@/services/routingService");
+      const destPoint = route.geometry[route.geometry.length - 1];
+      const newRoutes = await getRoute(currentPos, destPoint, vehicle);
+      if (newRoutes.length > 0) {
+        setActiveRoute(newRoutes[0]);
+        setCurrentStep(0);
+        setDistanceTraveled(0);
+        lastPosRef.current = currentPos;
+        lastSpokenStepRef.current = -1;
+        speak("Rerouting due to deviation from planned route.");
+        toast.info("Rerouting...");
+      }
+    } catch (error) {
+      console.error("Reroute failed:", error);
+    }
+  }, [route, vehicle, speak]);
 
   // Announce step changes
   useEffect(() => {
@@ -146,6 +173,12 @@ const ActiveNavigation = () => {
             speak(`You have arrived at ${destName}. ${weather ? `Current weather: ${weather.temperature} degrees, ${weather.condition}.` : ""}`);
             toast.success(`Arrived at ${destName}!`);
           }
+
+          // Check for deviation and reroute if needed
+          const closestDist = haversineM(newPos, route.geometry[newStep]);
+          if (closestDist > 200 && !arrivedRef.current) { // More than 200m off route
+            reroute(newPos);
+          }
         }
       },
       (err) => {
@@ -174,35 +207,52 @@ const ActiveNavigation = () => {
       }
       window.speechSynthesis.cancel();
     };
-  }, [route]);
+  }, [destName, reroute, route, speak, steps.length, totalDistance, totalDuration, vehicle, weather]);
 
-  // Save to favorites
-  const saveToFavorites = async () => {
-    if (!user) {
-      toast.error("Sign in to save favorites");
-      return;
-    }
+  const saveToFavorites = () => {
     if (!state?.sourceCoords || !state?.destCoords) {
       toast.error("Route data missing");
       return;
     }
 
-    const { error } = await supabase.from("favorite_routes").insert({
-      user_id: user.id,
+    const favorites = JSON.parse(localStorage.getItem("routeMaxFavorites") || "[]") as Array<Record<string, unknown>>;
+    const nextFavorite = {
+      id: `${state.sourceCoords.join(",")}-${state.destCoords.join(",")}-${vehicle}`,
       name: `${sourceName} → ${destName}`,
       source_name: sourceName,
       source_coords: state.sourceCoords,
       dest_name: destName,
       dest_coords: state.destCoords,
       vehicle_type: vehicle,
-    });
+      created_at: new Date().toISOString(),
+    };
 
-    if (error) {
-      if (error.code === "23505") toast.info("Already saved!");
-      else toast.error("Failed to save");
-    } else {
-      toast.success("Saved to favorites!");
+    const exists = favorites.some((favorite) => favorite.id === nextFavorite.id);
+    if (exists) {
+      toast.info("Already saved locally");
+      return;
     }
+
+    localStorage.setItem("routeMaxFavorites", JSON.stringify([nextFavorite, ...favorites]));
+    toast.success("Saved to this device");
+  };
+
+  const goToPreviousStep = () => {
+    setCurrentStep((step) => Math.max(0, step - 1));
+  };
+
+  const goToNextStep = () => {
+    setCurrentStep((step) => Math.min(steps.length - 1, step + 1));
+  };
+
+  const replayCurrentInstruction = () => {
+    const step = steps[currentStep];
+    if (!step) return;
+
+    const instruction = step.distance
+      ? `In ${step.distance}, ${step.instruction}`
+      : step.instruction;
+    speak(instruction);
   };
 
   const vehicleEmoji = vehicle === "bus" ? "🚌" : vehicle === "bike" ? "🏍️" : vehicle === "walk" ? "🚶" : "🚗";
@@ -224,8 +274,39 @@ const ActiveNavigation = () => {
               <p className="text-xs text-primary-foreground/70">{steps[currentStep]?.distance}</p>
             </div>
           </div>
-          <button onClick={() => setMuted(!muted)} className="touch-target shrink-0">
-            {muted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={replayCurrentInstruction}
+              className="touch-target rounded-full bg-primary-foreground/10"
+              title="Replay instruction"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+            <button onClick={() => setMuted(!muted)} className="touch-target rounded-full bg-primary-foreground/10">
+              {muted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-2 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={goToPreviousStep}
+            disabled={currentStep === 0}
+            className="flex items-center justify-center gap-1 rounded-lg bg-primary-foreground/10 px-3 py-2 text-xs font-semibold disabled:opacity-40"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Back
+          </button>
+          <button
+            type="button"
+            onClick={goToNextStep}
+            disabled={currentStep >= steps.length - 1}
+            className="flex items-center justify-center gap-1 rounded-lg bg-primary-foreground/10 px-3 py-2 text-xs font-semibold disabled:opacity-40"
+          >
+            Next
+            <ChevronRight className="w-4 h-4" />
           </button>
         </div>
 
@@ -323,10 +404,24 @@ const ActiveNavigation = () => {
           </div>
           <div className="flex gap-2">
             <button
-              onClick={saveToFavorites}
-              className="bg-warning text-warning-foreground px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-1"
+              onClick={goToPreviousStep}
+              disabled={currentStep === 0}
+              className="btn-ghost px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-1 disabled:opacity-40"
             >
-              <Star className="w-3.5 h-3.5" /> Save
+              <ChevronLeft className="w-4 h-4" /> Back
+            </button>
+            <button
+              onClick={goToNextStep}
+              disabled={currentStep >= steps.length - 1}
+              className="btn-ghost px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-1 disabled:opacity-40"
+            >
+              Next <ChevronRight className="w-4 h-4" />
+            </button>
+            <button
+              onClick={saveToFavorites}
+              className="btn-ghost px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-1"
+            >
+              <Star className="w-4 h-4" /> Save
             </button>
             <button
               onClick={() => {
@@ -336,7 +431,7 @@ const ActiveNavigation = () => {
                 window.speechSynthesis.cancel();
                 navigate("/");
               }}
-              className="bg-destructive text-destructive-foreground px-4 py-2 rounded-lg text-xs font-semibold"
+              className="btn-danger px-4 py-2 rounded-lg text-xs font-semibold"
             >
               End
             </button>

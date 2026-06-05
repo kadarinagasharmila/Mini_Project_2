@@ -8,7 +8,7 @@ import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
 
-delete (L.Icon.Default.prototype as any)._getIconUrl;
+delete (L.Icon.Default.prototype as L.Icon.Default & { _getIconUrl?: unknown })._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
   iconUrl: markerIcon,
@@ -65,10 +65,10 @@ const LocationMarker = ({ position }: { position?: [number, number] }) => {
   if (!position) return null;
 
   const icon = L.divIcon({
-    className: "custom-marker",
-    html: `<div style="width:16px;height:16px;background:hsl(217,91%,53%);border:3px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>`,
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
+    className: "user-marker-icon",
+    html: `<div class="user-marker-dot"></div>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
   });
 
   return (
@@ -90,46 +90,82 @@ interface MapViewProps {
   userLocation?: [number, number];
   className?: string;
   routeCoords?: [number, number][];
+  alternateRouteCoords?: [number, number][][];
   destination?: [number, number];
   bounds?: L.LatLngBoundsExpression;
   showIncidents?: boolean;
 }
 
 const destIconObj = L.divIcon({
-  className: "custom-marker",
-  html: `<div style="width:16px;height:16px;background:hsl(0,72%,51%);border:3px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>`,
-  iconSize: [16, 16],
-  iconAnchor: [8, 8],
+  className: "dest-marker-icon",
+  html: `<div class="dest-marker-dot"></div>`,
+  iconSize: [22, 22],
+  iconAnchor: [11, 11],
 });
 
-const IncidentMarkers = () => {
-  const [incidents, setIncidents] = useState<Incident[]>([]);
+const SAMPLE_INCIDENTS: Incident[] = [
+  {
+    id: "demo-1",
+    type: "construction",
+    description: "Road narrowing reported near HITEC City flyover.",
+    latitude: 17.4435,
+    longitude: 78.3772,
+    severity: "medium",
+    created_at: new Date().toISOString(),
+  },
+  {
+    id: "demo-2",
+    type: "pothole",
+    description: "Rough patch noted on inner road approaching Ameerpet.",
+    latitude: 17.4374,
+    longitude: 78.4482,
+    severity: "low",
+    created_at: new Date().toISOString(),
+  },
+];
+
+const IncidentMarkers = ({ enabled }: { enabled: boolean }) => {
+  const [incidents, setIncidents] = useState<Incident[]>(SAMPLE_INCIDENTS);
 
   useEffect(() => {
-    // Fetch existing incidents
-    const fetchIncidents = async () => {
-      const { data } = await supabase
-        .from("traffic_incidents")
-        .select("*")
-        .gte("expires_at", new Date().toISOString());
-      if (data) setIncidents(data as Incident[]);
-    };
-    fetchIncidents();
+    if (!enabled) return;
 
-    // Subscribe to realtime changes
+    let cancelled = false;
+
+    const loadIncidents = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("traffic_incidents")
+          .select("id,type,description,latitude,longitude,severity,created_at")
+          .gt("expires_at", new Date().toISOString())
+          .order("created_at", { ascending: false })
+          .limit(50);
+
+        if (error) throw error;
+        if (!cancelled && data?.length) {
+          setIncidents(data as Incident[]);
+        }
+      } catch (error) {
+        if (!cancelled) setIncidents(SAMPLE_INCIDENTS);
+      }
+    };
+
+    loadIncidents();
+
     const channel = supabase
-      .channel("incidents-realtime")
+      .channel("traffic-incidents-map")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "traffic_incidents" },
-        () => fetchIncidents()
+        loadIncidents
       )
       .subscribe();
 
     return () => {
+      cancelled = true;
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [enabled]);
 
   return (
     <>
@@ -161,7 +197,15 @@ const IncidentMarkers = () => {
   );
 };
 
-const MapView = ({ userLocation, className = "", routeCoords, destination, bounds, showIncidents = true }: MapViewProps) => {
+const MapView = ({
+  userLocation,
+  className = "",
+  routeCoords,
+  alternateRouteCoords = [],
+  destination,
+  bounds,
+  showIncidents = true,
+}: MapViewProps) => {
   return (
     <MapContainer
       center={userLocation || HYDERABAD_CENTER}
@@ -184,14 +228,47 @@ const MapView = ({ userLocation, className = "", routeCoords, destination, bound
           <Popup>Destination</Popup>
         </Marker>
       )}
+      {alternateRouteCoords.map((coords, index) => (
+        coords.length > 0 && (
+          <Polyline
+            key={`alternate-casing-${index}`}
+            positions={coords}
+            pathOptions={{ color: "#ffffff", weight: 8, opacity: 0.9 }}
+            className="route-line route-line-casing"
+          />
+        )
+      ))}
+      {alternateRouteCoords.map((coords, index) => (
+        coords.length > 0 && (
+          <Polyline
+            key={`alternate-route-${index}`}
+            positions={coords}
+            pathOptions={{ color: "#6b7280", weight: 5, opacity: 0.82 }}
+            className="route-line route-line-alternate"
+          />
+        )
+      ))}
       {routeCoords && routeCoords.length > 0 && (
-        <Polyline
-          positions={routeCoords}
-          pathOptions={{ color: "hsl(217,91%,53%)", weight: 5, opacity: 0.8 }}
-        />
+        <>
+          <Polyline
+            positions={routeCoords}
+            pathOptions={{ color: "#0f172a", weight: 11, opacity: 0.2 }}
+            className="route-line route-line-shadow"
+          />
+          <Polyline
+            positions={routeCoords}
+            pathOptions={{ color: "#ffffff", weight: 9, opacity: 0.95 }}
+            className="route-line route-line-casing"
+          />
+          <Polyline
+            positions={routeCoords}
+            pathOptions={{ color: "#1a73e8", weight: 6, opacity: 1 }}
+            className="route-line route-line-main"
+          />
+        </>
       )}
       {bounds && <FitBounds bounds={bounds} />}
-      {showIncidents && <IncidentMarkers />}
+      {showIncidents && <IncidentMarkers enabled={showIncidents} />}
     </MapContainer>
   );
 };

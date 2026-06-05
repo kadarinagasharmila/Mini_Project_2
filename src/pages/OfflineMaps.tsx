@@ -28,7 +28,7 @@ const OfflineMaps = () => {
           <Wifi className="w-5 h-5 text-primary" />
           <div className="flex-1">
             <p className="text-sm font-medium text-foreground">Download over Wi-Fi only</p>
-            <p className="text-xs text-muted-foreground">Save mobile data</p>
+            <p className="text-xs text-muted-foreground">Route cache works offline. Map tile packages need a tile download service.</p>
           </div>
           <div className="w-10 h-6 bg-primary rounded-full relative">
             <div className="absolute right-0.5 top-0.5 w-5 h-5 bg-primary-foreground rounded-full" />
