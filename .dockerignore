@@ -1,0 +1,12 @@
+node_modules
+dist
+.env
+.env.*
+.git
+.codex
+supabase/.temp
+telangana-maps.git
+npm-debug.log
+yarn-error.log
+Dockerfile
+docker-compose.yml
