@@ -6,9 +6,10 @@ interface SavedRoutesPanelProps {
   savedRoutes: SavedRoute[];
   onSelect: (route: SavedRoute) => void;
   onDelete: (id: string) => void;
+  onSaveCurrent?: () => void;
 }
 
-const SavedRoutesPanel = ({ savedRoutes, onSelect, onDelete }: SavedRoutesPanelProps) => {
+const SavedRoutesPanel = ({ savedRoutes, onSelect, onDelete, onSaveCurrent }: SavedRoutesPanelProps) => {
   const handleDelete = (id: string) => {
     deleteSavedRoute(id);
     onDelete(id);
@@ -21,6 +22,16 @@ const SavedRoutesPanel = ({ savedRoutes, onSelect, onDelete }: SavedRoutesPanelP
         <Heart className="w-8 h-8 mx-auto mb-2 opacity-50" />
         <p className="text-sm">No saved routes yet</p>
         <p className="text-xs">Save your favorite trips for quick access</p>
+        {onSaveCurrent && (
+          <button
+            type="button"
+            onClick={onSaveCurrent}
+            className="mt-4 inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+          >
+            <Heart className="w-3.5 h-3.5" />
+            Save current route
+          </button>
+        )}
       </div>
     );
   }

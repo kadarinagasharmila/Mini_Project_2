@@ -6,6 +6,8 @@ import MapView from "@/components/MapView";
 import SavedRoutesPanel from "@/components/SavedRoutesPanel";
 import RoadHazards from "@/components/RoadHazards";
 import RouteMlInsights from "@/components/RouteMlInsights";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
 
 import {
   buildDepartureOptions,
@@ -32,6 +34,7 @@ import L from "leaflet";
 const RouteResults = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
   const state = location.state as {
     source: [number, number];
     destination: [number, number];
@@ -244,6 +247,62 @@ const RouteResults = () => {
     }
   };
 
+  const handleSaveSelectedRoute = async () => {
+    const sourceLabel = state?.sourceName || "My Location";
+    const routeName = `${sourceLabel} → ${destName}`;
+
+    saveRoute({
+      name: routeName,
+      source,
+      sourceLabel,
+      destination,
+      destLabel: destName,
+      vehicle,
+    });
+    setSavedRoutes(getSavedRoutes());
+
+    if (!user) {
+      toast.success("Route saved on this device");
+      return;
+    }
+
+    const { data: existingFavorites, error: lookupError } = await supabase
+      .from("favorite_routes")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("name", routeName)
+      .eq("dest_name", destName)
+      .eq("vehicle_type", vehicle)
+      .limit(1);
+
+    if (lookupError) {
+      toast.warning("Saved on this device. Cloud save failed.");
+      return;
+    }
+
+    if (existingFavorites && existingFavorites.length > 0) {
+      toast.info("Route already saved");
+      return;
+    }
+
+    const { error } = await supabase.from("favorite_routes").insert({
+      user_id: user.id,
+      name: routeName,
+      source_name: sourceLabel,
+      source_coords: source,
+      dest_name: destName,
+      dest_coords: destination,
+      vehicle_type: vehicle,
+    });
+
+    if (error) {
+      toast.warning("Saved on this device. Cloud save failed.");
+      return;
+    }
+
+    toast.success("Route saved to favorites");
+  };
+
   return (
     <div className="h-screen flex flex-col">
       {/* Map Section */}
@@ -310,6 +369,7 @@ const RouteResults = () => {
                       });
                     }}
                     onDelete={() => setSavedRoutes(getSavedRoutes())}
+                    onSaveCurrent={() => void handleSaveSelectedRoute()}
                   />
                 </div>
               )}
@@ -618,7 +678,15 @@ const RouteResults = () => {
                       )}
                     </div>
                   )}
-                  <div className="mt-3 grid grid-cols-2 gap-2">
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveSelectedRoute()}
+                      className="flex items-center justify-center gap-2 rounded-lg bg-muted px-3 py-2 text-xs font-semibold text-foreground hover:bg-warning/10"
+                    >
+                      <Heart className="w-3.5 h-3.5" />
+                      Save
+                    </button>
                     <button
                       type="button"
                       onClick={handleShareSelectedRoute}
@@ -642,9 +710,17 @@ const RouteResults = () => {
 
               <div className="space-y-3">
                 {routes.map((route, idx) => (
-                  <button
+                  <div
                     key={idx}
                     onClick={() => setSelectedRoute(idx)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setSelectedRoute(idx);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
                     className={`w-full text-left floating-card p-4 transition-all active:scale-[0.98] ${
                       idx === selectedRoute ? "ring-2 ring-primary" : ""
                     } route-card`}
@@ -708,6 +784,7 @@ const RouteResults = () => {
                     {idx === selectedRoute && (
                       <div className="flex gap-3 mt-3 items-center">
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             navigate("/navigate", {
@@ -728,6 +805,7 @@ const RouteResults = () => {
                           Start Navigation
                         </button>
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             handleShareSelectedRoute();
@@ -738,18 +816,10 @@ const RouteResults = () => {
                           <Share2 className="w-4 h-4 text-muted-foreground" />
                         </button>
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            const newSavedRoute = saveRoute({
-                              name: `${state?.sourceName || "My Location"} → ${destName}`,
-                              source,
-                              sourceLabel: state?.sourceName || "My Location",
-                              destination,
-                              destLabel: destName,
-                              vehicle,
-                            });
-                            setSavedRoutes(getSavedRoutes());
-                            toast.success("Route saved!");
+                            void handleSaveSelectedRoute();
                           }}
                           className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center hover:bg-warning/10 transition-colors"
                           title="Save route"
@@ -758,7 +828,7 @@ const RouteResults = () => {
                         </button>
                       </div>
                     )}
-                  </button>
+                  </div>
                 ))}
               </div>
             </>

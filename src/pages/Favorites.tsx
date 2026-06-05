@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Star, MapPin, Navigation, Plus, Trash2, Loader2, LogIn } from "lucide-react";
+import { Star, Navigation, Trash2, Loader2, LogIn } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { deleteSavedRoute, getSavedRoutes, SavedRoute } from "@/services/routingService";
 
 interface FavoriteRoute {
   id: string;
@@ -20,9 +21,12 @@ const Favorites = () => {
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
   const [favorites, setFavorites] = useState<FavoriteRoute[]>([]);
+  const [localRoutes, setLocalRoutes] = useState<SavedRoute[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    setLocalRoutes(getSavedRoutes());
+
     if (!user) {
       setLoading(false);
       return;
@@ -56,16 +60,51 @@ const Favorites = () => {
   };
 
   const navigateToRoute = (fav: FavoriteRoute) => {
-    navigate("/plan", {
+    navigate("/results", {
       state: {
-        source: fav.source_name || "Current Location",
-        destination: fav.dest_name,
-        sourceCoords: fav.source_coords as [number, number],
-        destCoords: fav.dest_coords as [number, number],
+        source: fav.source_coords as [number, number],
+        destination: fav.dest_coords as [number, number],
+        sourceName: fav.source_name || "Current Location",
+        destName: fav.dest_name,
         vehicle: fav.vehicle_type || "car",
+        avoidTolls: false,
+        departureTime: null,
       },
     });
   };
+
+  const navigateToLocalRoute = (route: SavedRoute) => {
+    navigate("/results", {
+      state: {
+        source: route.source,
+        destination: route.destination,
+        sourceName: route.sourceLabel,
+        destName: route.destLabel,
+        vehicle: route.vehicle,
+        avoidTolls: false,
+        departureTime: null,
+      },
+    });
+  };
+
+  const deleteLocalRoute = (id: string) => {
+    deleteSavedRoute(id);
+    setLocalRoutes(getSavedRoutes());
+    toast.success("Removed from saved routes");
+  };
+
+  const getRouteKey = (source: number[], destination: number[], vehicle: string | null) =>
+    `${source.join(",")}|${destination.join(",")}|${vehicle || "car"}`;
+
+  const favoriteRouteKeys = new Set(
+    favorites.map((fav) => getRouteKey(fav.source_coords, fav.dest_coords, fav.vehicle_type))
+  );
+  const visibleLocalRoutes = user
+    ? localRoutes.filter((route) => !favoriteRouteKeys.has(getRouteKey(route.source, route.destination, route.vehicle)))
+    : localRoutes;
+  const hasSavedRoutes = user
+    ? favorites.length > 0 || visibleLocalRoutes.length > 0
+    : localRoutes.length > 0;
 
   if (authLoading) {
     return (
@@ -75,27 +114,25 @@ const Favorites = () => {
     );
   }
 
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-background pb-20 flex flex-col items-center justify-center px-6">
-        <Star className="w-12 h-12 text-muted-foreground mb-4" />
-        <h2 className="text-lg font-semibold text-foreground mb-2">Sign in to view favorites</h2>
-        <p className="text-sm text-muted-foreground text-center mb-6">Save your frequent routes for quick access</p>
-        <button
-          onClick={() => navigate("/auth")}
-          className="bg-primary text-primary-foreground px-6 py-3 rounded-xl font-semibold text-sm flex items-center gap-2"
-        >
-          <LogIn className="w-4 h-4" /> Sign In
-        </button>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-background pb-20">
       <div className="bg-card border-b border-border px-4 pt-6 pb-4">
-        <h1 className="text-xl font-bold text-foreground">Favorites</h1>
-        <p className="text-xs text-muted-foreground mt-1">Your saved routes</p>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-bold text-foreground">Saved</h1>
+            <p className="text-xs text-muted-foreground mt-1">
+              {user ? "Your favorite routes" : "Routes saved on this device"}
+            </p>
+          </div>
+          {!user && (
+            <button
+              onClick={() => navigate("/auth")}
+              className="shrink-0 bg-primary text-primary-foreground px-3 py-2 rounded-lg font-semibold text-xs flex items-center gap-1.5"
+            >
+              <LogIn className="w-3.5 h-3.5" /> Sign In
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="px-4 pt-4">
@@ -103,15 +140,43 @@ const Favorites = () => {
           <div className="flex justify-center py-12">
             <Loader2 className="w-6 h-6 animate-spin text-primary" />
           </div>
-        ) : favorites.length === 0 ? (
+        ) : !hasSavedRoutes ? (
           <div className="text-center py-12">
             <Star className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
             <p className="text-sm text-muted-foreground">No saved routes yet</p>
-            <p className="text-xs text-muted-foreground mt-1">Navigate a route and save it to favorites</p>
+            <p className="text-xs text-muted-foreground mt-1">Save a route from route results</p>
           </div>
         ) : (
           <div className="space-y-2">
-            {favorites.map((fav) => (
+            {visibleLocalRoutes.map((route) => (
+              <div
+                key={route.id}
+                className="floating-card p-3 flex items-center gap-3"
+              >
+                <button
+                  onClick={() => navigateToLocalRoute(route)}
+                  className="flex-1 flex items-center gap-3 active:scale-[0.98] transition-transform"
+                >
+                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                    <Navigation className="w-4 h-4 text-primary" />
+                  </div>
+                  <div className="text-left min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{route.name}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {route.sourceLabel} → {route.destLabel}
+                    </p>
+                    <p className="text-xs text-muted-foreground capitalize">{route.vehicle}</p>
+                  </div>
+                </button>
+                <button
+                  onClick={() => deleteLocalRoute(route.id)}
+                  className="touch-target shrink-0"
+                >
+                  <Trash2 className="w-4 h-4 text-destructive" />
+                </button>
+              </div>
+            ))}
+            {user && favorites.map((fav) => (
               <div
                 key={fav.id}
                 className="floating-card p-3 flex items-center gap-3"

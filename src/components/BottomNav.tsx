@@ -1,9 +1,10 @@
-import { Map, Route } from "lucide-react";
+import { Map, Route, Star } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 const navItems = [
   { path: "/", icon: Map, label: "Map" },
   { path: "/plan", icon: Route, label: "Plan" },
+  { path: "/favorites", icon: Star, label: "Saved" },
 ];
 
 const BottomNav = () => {
