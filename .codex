@@ -1,0 +1,28 @@
+def activity_selection(starts, ends):
+    # Combine start and end times into intervals
+    intervals = list(zip(starts, ends))
+    
+    # Sort intervals based on end time
+    intervals.sort(key=lambda x: x[1])
+    
+    selected = []
+    
+    # Add first interval
+    selected.append(intervals[0])
+    last_finish = intervals[0][1]
+    
+    # Iterate through remaining intervals
+    for i in range(1, len(intervals)):
+        if intervals[i][0] >= last_finish:
+            selected.append(intervals[i])
+            last_finish = intervals[i][1]
+    
+    return selected
+
+
+# Example usage
+starts = [1, 3, 0, 5, 8, 5]
+ends = [2, 4, 6, 7, 9, 9]
+
+result = activity_selection(starts, ends)
+print("Selected activities:", result)

@@ -15,21 +15,20 @@ const BottomNav = () => {
   if (location.pathname === "/auth") return null;
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-[1000] bg-card border-t border-border safe-bottom rounded-t-xl backdrop-blur-sm">
-      <div className="flex items-center justify-around max-w-lg mx-auto py-1">
+    <nav className="fixed bottom-0 left-0 right-0 z-[1000] safe-bottom px-3 pb-1">
+      <div className="mx-auto flex max-w-lg items-center justify-around rounded-2xl border border-white/70 bg-card/90 px-1 py-1 shadow-[0_12px_36px_rgba(15,23,42,0.16)] backdrop-blur-xl">
         {navItems.map(({ path, icon: Icon, label }) => {
           const isActive = location.pathname === path;
           return (
             <button
               key={path}
               onClick={() => navigate(path)}
-              className={`touch-target flex-1 flex flex-col items-center gap-0.5 py-2 transition-colors relative ${
-                isActive ? "text-primary" : "text-muted-foreground"
+              className={`touch-target relative flex-1 flex-col gap-0.5 rounded-xl py-2 transition-colors ${
+                isActive ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted/60"
               }`}
             >
               <Icon className="w-5 h-5" strokeWidth={isActive ? 2.5 : 2} />
               <span className="text-[11px] font-medium">{label}</span>
-              {isActive && <span className="absolute -top-1 w-1.5 h-1.5 rounded-full bg-primary" />}
             </button>
           );
         })}

@@ -20,6 +20,7 @@ import {
   getRoute,
   getWeather,
   getHazardsNearRoute,
+  getLiveHazardsNearRoute,
   predictRouteMLRisk,
   getSavedRoutes,
   saveRoute,
@@ -28,6 +29,7 @@ import {
   RouteResult,
   WeatherData,
   SavedRoute,
+  RoadHazard,
 } from "@/services/routingService";
 import L from "leaflet";
 
@@ -56,6 +58,7 @@ const RouteResults = () => {
   const [loadError, setLoadError] = useState("");
   const [savedRoutes, setSavedRoutes] = useState<SavedRoute[]>([]);
   const [showSavedRoutes, setShowSavedRoutes] = useState(false);
+  const [liveHazards, setLiveHazards] = useState<RoadHazard[]>([]);
 
   const source = useMemo<[number, number]>(
     () => state?.source || [17.385, 78.4867],
@@ -83,9 +86,13 @@ const RouteResults = () => {
   );
 
   useEffect(() => {
+    let cancelled = false;
+
     const fetchAll = async () => {
       setLoading(true);
       setLoadError("");
+      setAiInsight("");
+      setAiLoading(false);
       const snapshotTime = baseAnalysisTime;
       setAnalysisTime(snapshotTime);
       try {
@@ -106,17 +113,20 @@ const RouteResults = () => {
         const forecastData = forecastResult.status === "fulfilled" ? forecastResult.value : [];
         const weatherData = isCustomFutureDeparture ? null : liveWeatherData;
 
+        if (cancelled) return;
+
         setRoutes(results);
+        setSelectedRoute(0);
         setWeather(weatherData);
         setHourlyForecast(forecastData);
 
         // Load saved routes
         setSavedRoutes(getSavedRoutes());
+        setLoading(false);
 
         setAiLoading(true);
-        try {
-          setAiInsight(
-            await generateTrafficAiInsight({
+        void Promise.race([
+          generateTrafficAiInsight({
               sourceName: state?.sourceName || "Your location",
               destName,
               vehicle,
@@ -124,13 +134,20 @@ const RouteResults = () => {
               durationMin: results[0]?.duration,
               weather: weatherData,
               analysisTime: snapshotTime,
-            })
-          );
-        } catch {
-          setAiInsight("");
-        }
-        setAiLoading(false);
+            }),
+          new Promise<string>((resolve) => window.setTimeout(() => resolve(""), 6000)),
+        ])
+          .then((insight) => {
+            if (!cancelled) setAiInsight(insight);
+          })
+          .catch(() => {
+            if (!cancelled) setAiInsight("");
+          })
+          .finally(() => {
+            if (!cancelled) setAiLoading(false);
+          });
       } catch (error) {
+        if (cancelled) return;
         console.error("Failed to load results:", error);
         setRoutes([]);
         setWeather(null);
@@ -138,10 +155,14 @@ const RouteResults = () => {
         setAiInsight("");
         setLoadError("Could not load routes right now. Please try again in a moment.");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
     fetchAll();
+
+    return () => {
+      cancelled = true;
+    };
   }, [baseAnalysisTime, destination, source, state?.avoidTolls, state?.sourceName, vehicle, destName, isCustomFutureDeparture]);
 
   const routeNames = routes.map((r, i) => r.summary || (i === 0 ? "Recommended" : `Route ${i + 1}`));
@@ -152,8 +173,10 @@ const RouteResults = () => {
     .map((route) => route.geometry)
     .filter((geometry) => geometry.length > 0);
   const hazards = useMemo(
-    () => (currentRoute?.geometry?.length ? getHazardsNearRoute(currentRoute.geometry) : []),
-    [currentRoute]
+    () => liveHazards.length > 0
+      ? liveHazards
+      : (currentRoute?.geometry?.length ? getHazardsNearRoute(currentRoute.geometry) : []),
+    [currentRoute, liveHazards]
   );
   const mlPrediction = useMemo(
     () =>
@@ -224,6 +247,27 @@ const RouteResults = () => {
   const selectedSteps = currentRoute?.steps ?? [];
   const firstManeuver = selectedSteps[0];
   const nextManeuver = selectedSteps.find((step) => step.instruction !== firstManeuver?.instruction);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!currentRoute?.geometry?.length) {
+      setLiveHazards([]);
+      return;
+    }
+
+    getLiveHazardsNearRoute(currentRoute.geometry)
+      .then((hazards) => {
+        if (!cancelled) setLiveHazards(hazards);
+      })
+      .catch(() => {
+        if (!cancelled) setLiveHazards([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentRoute]);
 
   const handleShareSelectedRoute = async () => {
     if (!currentRoute) return;
@@ -342,6 +386,76 @@ const RouteResults = () => {
             </div>
           ) : (
             <>
+              {routes.length > 0 && (
+                <div className="mb-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <h2 className="text-base font-semibold text-foreground">
+                      {routes.length} route{routes.length !== 1 ? "s" : ""} found
+                    </h2>
+                    {currentRoute && (
+                      <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-semibold text-primary">
+                        ETA {getETA(currentRoute.duration)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid gap-2">
+                    {routes.map((route, idx) => (
+                      <button
+                        key={`quick-route-${idx}`}
+                        type="button"
+                        onClick={() => setSelectedRoute(idx)}
+                        className={`rounded-2xl border p-3 text-left transition-all ${
+                          idx === selectedRoute
+                            ? "border-primary bg-gradient-to-br from-primary/15 to-secondary/10 shadow-sm"
+                            : "border-border bg-card hover:bg-muted/40"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-foreground">
+                              {routeNames[idx] || `Route ${idx + 1}`}
+                            </p>
+                            <p className={`mt-0.5 text-xs font-medium ${route.trafficColor}`}>
+                              {route.trafficLevel}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-lg font-bold text-foreground">{formatDuration(route.duration)}</p>
+                            <p className="text-[11px] text-muted-foreground">{route.distance} km</p>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  {currentRoute && (
+                    <button
+                      type="button"
+                      onClick={() => navigate("/navigate", {
+                        state: {
+                          route: currentRoute,
+                          destName,
+                          sourceName: state?.sourceName || "Current Location",
+                          sourceCoords: source,
+                          destCoords: destination,
+                          vehicle,
+                          weather,
+                        },
+                      })}
+                      className="btn-primary mt-3 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-semibold"
+                    >
+                      <Navigation className="h-4 w-4" />
+                      Start Navigation
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {!loadError && routes.length === 0 && (
+                <div className="mb-3 rounded-xl border border-border bg-card px-3 py-4 text-sm text-muted-foreground">
+                  No routes were returned for this trip.
+                </div>
+              )}
+
               {/* Saved Routes Toggle */}
               <button
                 onClick={() => setShowSavedRoutes(!showSavedRoutes)}
@@ -509,16 +623,6 @@ const RouteResults = () => {
                 </div>
               )}
 
-              <h2 className="text-base font-semibold text-foreground mb-3">
-                {routes.length} route{routes.length !== 1 ? "s" : ""} found
-              </h2>
-
-              {!loadError && routes.length === 0 && (
-                <div className="rounded-xl border border-border bg-card px-3 py-4 text-sm text-muted-foreground">
-                  No routes were returned for this trip.
-                </div>
-              )}
-
               {/* AI Traffic Insight */}
               {(aiInsight || aiLoading) && (
                 <div className="bg-primary/5 border border-primary/20 rounded-xl p-3 mb-3 flex items-start gap-2">
@@ -632,26 +736,31 @@ const RouteResults = () => {
               )}
 
               {currentRoute && (
-                <div className="bg-card border border-border rounded-xl p-3 mb-3">
+                <div className="premium-card mb-3 rounded-2xl p-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
-                      <ListChecks className="w-3.5 h-3.5 text-primary" />
-                      <span>Selected Route</span>
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary">
+                        <ListChecks className="w-4 h-4" />
+                      </span>
+                      <div>
+                        <p className="text-sm font-semibold">Selected Route</p>
+                        <p className="text-[11px] font-normal text-muted-foreground">{currentRoute.trafficLevel}</p>
+                      </div>
                     </div>
                     <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-semibold text-primary">
                       {routeNames[selectedRoute] || `Route ${selectedRoute + 1}`}
                     </span>
                   </div>
                   <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                    <div className="rounded-lg bg-muted/40 px-2 py-2">
+                    <div className="stat-chip">
                       <p className="text-sm font-bold text-foreground">{formatDuration(currentRoute.duration)}</p>
                       <p className="text-[10px] text-muted-foreground">Duration</p>
                     </div>
-                    <div className="rounded-lg bg-muted/40 px-2 py-2">
+                    <div className="stat-chip">
                       <p className="text-sm font-bold text-foreground">{currentRoute.distance} km</p>
                       <p className="text-[10px] text-muted-foreground">Distance</p>
                     </div>
-                    <div className="rounded-lg bg-muted/40 px-2 py-2">
+                    <div className="stat-chip">
                       <p className="text-sm font-bold text-foreground">{selectedSteps.length}</p>
                       <p className="text-[10px] text-muted-foreground">Steps</p>
                     </div>
@@ -659,8 +768,8 @@ const RouteResults = () => {
                   {(firstManeuver || nextManeuver) && (
                     <div className="mt-3 space-y-2">
                       {firstManeuver && (
-                        <div className="flex items-start gap-2 rounded-lg bg-muted/30 px-3 py-2 text-xs">
-                          <span className="text-base leading-none">{firstManeuver.icon}</span>
+                        <div className="flex items-start gap-2 rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-xs">
+                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-base leading-none">{firstManeuver.icon}</span>
                           <div className="min-w-0">
                             <p className="font-medium text-foreground truncate">{firstManeuver.instruction}</p>
                             <p className="text-[10px] text-muted-foreground">{firstManeuver.distance} · {firstManeuver.duration}</p>
@@ -668,8 +777,8 @@ const RouteResults = () => {
                         </div>
                       )}
                       {nextManeuver && (
-                        <div className="flex items-start gap-2 rounded-lg bg-muted/30 px-3 py-2 text-xs">
-                          <span className="text-base leading-none">{nextManeuver.icon}</span>
+                        <div className="flex items-start gap-2 rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-xs">
+                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-base leading-none">{nextManeuver.icon}</span>
                           <div className="min-w-0">
                             <p className="font-medium text-foreground truncate">Then {nextManeuver.instruction}</p>
                             <p className="text-[10px] text-muted-foreground">{nextManeuver.distance} · {nextManeuver.duration}</p>
@@ -682,7 +791,7 @@ const RouteResults = () => {
                     <button
                       type="button"
                       onClick={() => void handleSaveSelectedRoute()}
-                      className="flex items-center justify-center gap-2 rounded-lg bg-muted px-3 py-2 text-xs font-semibold text-foreground hover:bg-warning/10"
+                      className="flex items-center justify-center gap-2 rounded-xl bg-background/80 px-3 py-2 text-xs font-semibold text-foreground hover:bg-warning/10"
                     >
                       <Heart className="w-3.5 h-3.5" />
                       Save
@@ -690,7 +799,7 @@ const RouteResults = () => {
                     <button
                       type="button"
                       onClick={handleShareSelectedRoute}
-                      className="flex items-center justify-center gap-2 rounded-lg bg-muted px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted/80"
+                      className="flex items-center justify-center gap-2 rounded-xl bg-background/80 px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted/80"
                     >
                       <Share2 className="w-3.5 h-3.5" />
                       Share
@@ -699,7 +808,7 @@ const RouteResults = () => {
                       href={googleMapsUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="flex items-center justify-center gap-2 rounded-lg bg-muted px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted/80"
+                      className="flex items-center justify-center gap-2 rounded-xl bg-background/80 px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted/80"
                     >
                       <ExternalLink className="w-3.5 h-3.5" />
                       Open Maps
@@ -721,12 +830,14 @@ const RouteResults = () => {
                     }}
                     role="button"
                     tabIndex={0}
-                    className={`w-full text-left floating-card p-4 transition-all active:scale-[0.98] ${
-                      idx === selectedRoute ? "ring-2 ring-primary" : ""
+                    className={`w-full text-left p-4 transition-all active:scale-[0.98] ${
+                      idx === selectedRoute
+                        ? "premium-card ring-2 ring-primary ring-offset-2 ring-offset-background"
+                        : "floating-card"
                     } route-card`}
                   >
                     {idx === 0 && (
-                      <span className="inline-flex items-center gap-1 bg-primary text-primary-foreground text-[10px] font-semibold px-2 py-0.5 rounded-full mb-2">
+                      <span className="mb-2 inline-flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground">
                         <Sparkles className="w-3 h-3" /> AI Recommended
                       </span>
                     )}
@@ -748,16 +859,16 @@ const RouteResults = () => {
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1">
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+                      <span className="stat-chip flex items-center justify-center gap-1">
                         <MapPin className="w-3 h-3" />
                         {route.distance} km
                       </span>
-                      <span className="flex items-center gap-1">
+                      <span className="stat-chip flex items-center justify-center gap-1 truncate">
                         <IndianRupee className="w-3 h-3" />
-                        {route.toll}
+                        <span className="truncate">{route.toll}</span>
                       </span>
-                      <span className="flex items-center gap-1">
+                      <span className="stat-chip flex items-center justify-center gap-1">
                         <VehicleIcon className="w-3 h-3" />
                         {vehicle.charAt(0).toUpperCase() + vehicle.slice(1)}
                       </span>
@@ -810,7 +921,7 @@ const RouteResults = () => {
                             e.stopPropagation();
                             handleShareSelectedRoute();
                           }}
-                          className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center hover:bg-muted/80 transition-colors"
+                          className="w-10 h-10 rounded-xl bg-background/80 flex items-center justify-center hover:bg-muted/80 transition-colors"
                           title="Share"
                         >
                           <Share2 className="w-4 h-4 text-muted-foreground" />
@@ -821,7 +932,7 @@ const RouteResults = () => {
                             e.stopPropagation();
                             void handleSaveSelectedRoute();
                           }}
-                          className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center hover:bg-warning/10 transition-colors"
+                          className="w-10 h-10 rounded-xl bg-background/80 flex items-center justify-center hover:bg-warning/10 transition-colors"
                           title="Save route"
                         >
                           <Heart className="w-4 h-4 text-muted-foreground" />

@@ -35,6 +35,7 @@ const departurePresets = [
 ] as const;
 
 const RECENT_TRIPS_KEY = "routeMaxRecentTrips";
+const MAX_RECENT_TRIPS = 50;
 
 interface RecentTrip {
   id: string;
@@ -95,7 +96,7 @@ const RoutePlanning = () => {
 
   const persistRecentTrips = (updater: (current: RecentTrip[]) => RecentTrip[]) => {
     setRecentTrips((current) => {
-      const next = updater(current).slice(0, 5);
+      const next = updater(current).slice(0, MAX_RECENT_TRIPS);
       localStorage.setItem(RECENT_TRIPS_KEY, JSON.stringify(next));
       return next;
     });

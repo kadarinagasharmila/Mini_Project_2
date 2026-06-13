@@ -1,7 +1,7 @@
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, CircleMarker } from "react-leaflet";
 import L from "leaflet";
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { getLiveTrafficIncidents, TrafficIncident } from "@/services/routingService";
 
 // Fix default marker icon
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
@@ -17,19 +17,11 @@ L.Icon.Default.mergeOptions({
 
 const HYDERABAD_CENTER: [number, number] = [17.385, 78.4867];
 
-interface Incident {
-  id: string;
-  type: string;
-  description: string | null;
-  latitude: number;
-  longitude: number;
-  severity: string;
-  created_at: string;
-}
-
 const INCIDENT_COLORS: Record<string, string> = {
   accident: "#ef4444",
   construction: "#f97316",
+  closure: "#991b1b",
+  congestion: "#f59e0b",
   police: "#3b82f6",
   flood: "#06b6d4",
   pothole: "#eab308",
@@ -39,6 +31,8 @@ const INCIDENT_COLORS: Record<string, string> = {
 const INCIDENT_LABELS: Record<string, string> = {
   accident: "🚨 Accident",
   construction: "🚧 Construction",
+  closure: "⛔ Road closure",
+  congestion: "🚗 Congestion",
   police: "👮 Police",
   flood: "🌊 Flooding",
   pothole: "⚠️ Pothole",
@@ -48,11 +42,22 @@ const INCIDENT_LABELS: Record<string, string> = {
 const InvalidateSize = () => {
   const map = useMap();
   useEffect(() => {
-    setTimeout(() => map.invalidateSize(), 100);
-    setTimeout(() => map.invalidateSize(), 500);
-    const handleResize = () => map.invalidateSize();
+    const invalidate = () => {
+      try {
+        map.invalidateSize();
+      } catch {
+        // Leaflet can throw if a delayed resize lands after unmount.
+      }
+    };
+    const shortTimer = window.setTimeout(invalidate, 100);
+    const longTimer = window.setTimeout(invalidate, 500);
+    const handleResize = () => invalidate();
     window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+    return () => {
+      window.clearTimeout(shortTimer);
+      window.clearTimeout(longTimer);
+      window.removeEventListener("resize", handleResize);
+    };
   }, [map]);
   return null;
 };
@@ -103,7 +108,7 @@ const destIconObj = L.divIcon({
   iconAnchor: [11, 11],
 });
 
-const SAMPLE_INCIDENTS: Incident[] = [
+const SAMPLE_INCIDENTS: TrafficIncident[] = [
   {
     id: "demo-1",
     type: "construction",
@@ -112,6 +117,7 @@ const SAMPLE_INCIDENTS: Incident[] = [
     longitude: 78.3772,
     severity: "medium",
     created_at: new Date().toISOString(),
+    source: "sample",
   },
   {
     id: "demo-2",
@@ -121,11 +127,12 @@ const SAMPLE_INCIDENTS: Incident[] = [
     longitude: 78.4482,
     severity: "low",
     created_at: new Date().toISOString(),
+    source: "sample",
   },
 ];
 
 const IncidentMarkers = ({ enabled }: { enabled: boolean }) => {
-  const [incidents, setIncidents] = useState<Incident[]>(SAMPLE_INCIDENTS);
+  const [incidents, setIncidents] = useState<TrafficIncident[]>(SAMPLE_INCIDENTS);
 
   useEffect(() => {
     if (!enabled) return;
@@ -134,16 +141,13 @@ const IncidentMarkers = ({ enabled }: { enabled: boolean }) => {
 
     const loadIncidents = async () => {
       try {
-        const { data, error } = await supabase
-          .from("traffic_incidents")
-          .select("id,type,description,latitude,longitude,severity,created_at")
-          .gt("expires_at", new Date().toISOString())
-          .order("created_at", { ascending: false })
-          .limit(50);
+        const liveIncidents = await getLiveTrafficIncidents({
+          bbox: { minLat: 17.18, minLng: 78.25, maxLat: 17.6, maxLng: 78.65 },
+          limit: 70,
+        });
 
-        if (error) throw error;
-        if (!cancelled && data?.length) {
-          setIncidents(data as Incident[]);
+        if (!cancelled) {
+          setIncidents(liveIncidents.length ? liveIncidents : SAMPLE_INCIDENTS);
         }
       } catch (error) {
         if (!cancelled) setIncidents(SAMPLE_INCIDENTS);
@@ -151,19 +155,11 @@ const IncidentMarkers = ({ enabled }: { enabled: boolean }) => {
     };
 
     loadIncidents();
-
-    const channel = supabase
-      .channel("traffic-incidents-map")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "traffic_incidents" },
-        loadIncidents
-      )
-      .subscribe();
+    const intervalId = window.setInterval(loadIncidents, 60000);
 
     return () => {
       cancelled = true;
-      supabase.removeChannel(channel);
+      window.clearInterval(intervalId);
     };
   }, [enabled]);
 
@@ -186,6 +182,10 @@ const IncidentMarkers = ({ enabled }: { enabled: boolean }) => {
               <p className="font-semibold">{INCIDENT_LABELS[inc.type] || inc.type}</p>
               {inc.description && <p className="mt-1">{inc.description}</p>}
               <p className="text-muted-foreground mt-1 capitalize">Severity: {inc.severity}</p>
+              <p className="text-muted-foreground capitalize">Source: {inc.source}</p>
+              {inc.delaySeconds ? (
+                <p className="text-muted-foreground">Delay: {Math.round(inc.delaySeconds / 60)} min</p>
+              ) : null}
               <p className="text-muted-foreground">
                 {new Date(inc.created_at).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true })}
               </p>

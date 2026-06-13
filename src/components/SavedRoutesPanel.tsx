@@ -1,4 +1,5 @@
-import { Heart, MapPin, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Heart, MapPin, Search, Trash2 } from "lucide-react";
 import { SavedRoute, deleteSavedRoute } from "@/services/routingService";
 import { toast } from "sonner";
 
@@ -10,10 +11,32 @@ interface SavedRoutesPanelProps {
 }
 
 const SavedRoutesPanel = ({ savedRoutes, onSelect, onDelete, onSaveCurrent }: SavedRoutesPanelProps) => {
+  const [query, setQuery] = useState("");
+  const filteredRoutes = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return savedRoutes;
+
+    return savedRoutes.filter((route) => {
+      const haystack = `${route.name} ${route.sourceLabel} ${route.destLabel} ${route.vehicle}`.toLowerCase();
+      return haystack.includes(normalizedQuery);
+    });
+  }, [query, savedRoutes]);
+
   const handleDelete = (id: string) => {
     deleteSavedRoute(id);
     onDelete(id);
     toast.success("Route deleted");
+  };
+
+  const formatSavedTime = (route: SavedRoute) => {
+    const value = route.lastUsedAt || route.savedAt;
+    if (!value) return "";
+
+    return new Date(value).toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
   };
 
   if (savedRoutes.length === 0) {
@@ -37,8 +60,24 @@ const SavedRoutesPanel = ({ savedRoutes, onSelect, onDelete, onSaveCurrent }: Sa
   }
 
   return (
-    <div className="space-y-2">
-      {savedRoutes.map((route) => (
+    <div className="space-y-3">
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={`Search ${savedRoutes.length} saved route${savedRoutes.length === 1 ? "" : "s"}`}
+          className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-xs text-foreground outline-none focus:border-primary"
+        />
+      </div>
+
+      {filteredRoutes.length === 0 && (
+        <div className="rounded-lg bg-muted/50 p-4 text-center text-xs text-muted-foreground">
+          No saved routes match that search.
+        </div>
+      )}
+
+      {filteredRoutes.map((route) => (
         <div
           key={route.id}
           className="flex items-center justify-between bg-muted/50 rounded-lg p-3 hover:bg-muted cursor-pointer transition-colors"
@@ -52,8 +91,9 @@ const SavedRoutesPanel = ({ savedRoutes, onSelect, onDelete, onSaveCurrent }: Sa
                 {route.sourceLabel} → {route.destLabel}
               </span>
             </p>
-            <p className="text-[10px] text-muted-foreground mt-0.5">
-              Used {route.timesUsed} time{route.timesUsed !== 1 ? "s" : ""}
+            <p className="text-[10px] text-muted-foreground mt-0.5 capitalize">
+              {route.vehicle} · Used {route.timesUsed} time{route.timesUsed !== 1 ? "s" : ""}
+              {formatSavedTime(route) ? ` · ${formatSavedTime(route)}` : ""}
             </p>
           </div>
           <button

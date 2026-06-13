@@ -77,16 +77,30 @@ export interface SavedRoute {
   destLabel: string;
   vehicle: string;
   savedAt: string;
+  lastUsedAt?: string;
   timesUsed: number;
 }
 
 export interface RoadHazard {
   id: string;
-  type: "speedcamera" | "construction" | "pothole" | "accident";
+  type: "speedcamera" | "construction" | "pothole" | "accident" | "closure" | "congestion" | "other";
   lat: number;
   lng: number;
   severity: "low" | "medium" | "high";
   description?: string;
+}
+
+export interface TrafficIncident {
+  id: string;
+  type: string;
+  description: string | null;
+  latitude: number;
+  longitude: number;
+  severity: "low" | "medium" | "high";
+  created_at: string;
+  source: "tomtom" | "community" | "sample";
+  roadName?: string | null;
+  delaySeconds?: number | null;
 }
 
 export interface RouteMlPrediction {
@@ -106,10 +120,21 @@ const OSRM_BASE = "https://router.project-osrm.org";
 const OPEN_METEO_BASE = "https://api.open-meteo.com/v1/forecast";
 const GEOCODE_MAPS_CO_BASE = "https://geocode.maps.co/search";
 const OVERPASS_API = "https://overpass-api.de/api/interpreter";
+const TOMTOM_API_KEY = import.meta.env.VITE_TOMTOM_API_KEY as string | undefined;
+const TOMTOM_ROUTING_BASE = "https://api.tomtom.com/routing/1/calculateRoute";
+const TOMTOM_TRAFFIC_INCIDENTS_URL = "https://api.tomtom.com/traffic/services/5/incidentDetails";
+const TELANGANA_BBOX = {
+  minLat: 15.74,
+  minLng: 77.119,
+  maxLat: 19.674,
+  maxLng: 81.728,
+};
 
 const SAVED_ROUTES_KEY = "telangana_maps_saved_routes";
 const ROUTE_CACHE_KEY = "telangana_maps_route_cache";
 const OFFLINE_DATA_KEY = "telangana_maps_offline_data";
+const MAX_SAVED_ROUTES = 100;
+const MAX_CACHED_ROUTES = 50;
 const ROUTE_ALTERNATIVE_COUNT = 12;
 
 type NominatimPlace = {
@@ -157,6 +182,67 @@ type OsrmRoute = {
 type OsrmResponse = {
   code?: string;
   routes?: OsrmRoute[];
+};
+
+type TomTomInstruction = {
+  message?: string;
+  street?: string;
+  routeOffsetInMeters?: number;
+  travelTimeInSeconds?: number;
+  lengthInMeters?: number;
+  maneuver?: string;
+};
+
+type TomTomRoute = {
+  summary?: {
+    lengthInMeters?: number;
+    travelTimeInSeconds?: number;
+    trafficDelayInSeconds?: number;
+    noTrafficTravelTimeInSeconds?: number;
+    departureTime?: string;
+    arrivalTime?: string;
+  };
+  legs?: Array<{
+    points?: Array<{
+      latitude?: number;
+      longitude?: number;
+    }>;
+  }>;
+  guidance?: {
+    instructions?: TomTomInstruction[];
+  };
+};
+
+type TomTomRouteResponse = {
+  routes?: TomTomRoute[];
+};
+
+type TomTomIncident = {
+  type?: string;
+  geometry?: {
+    type?: string;
+    coordinates?: number[] | number[][];
+  };
+  properties?: {
+    id?: string;
+    iconCategory?: number;
+    magnitudeOfDelay?: number;
+    startTime?: string;
+    endTime?: string;
+    from?: string;
+    to?: string;
+    length?: number;
+    delay?: number;
+    roadNumbers?: string[];
+    events?: Array<{
+      description?: string;
+      code?: number;
+    }>;
+  };
+};
+
+type TomTomIncidentResponse = {
+  incidents?: TomTomIncident[];
 };
 
 type OpenMeteoCurrentResponse = {
@@ -619,6 +705,17 @@ function formatDuration(seconds: number): string {
   return remaining ? `${hours}h ${remaining}min` : `${hours}h`;
 }
 
+function scaleFormattedDuration(value: string, scale: number): string {
+  const hourMatch = value.match(/(\d+)\s*h/);
+  const minuteMatch = value.match(/(\d+)\s*min/);
+  const hours = hourMatch ? Number(hourMatch[1]) : 0;
+  const minutes = minuteMatch ? Number(minuteMatch[1]) : 0;
+  const totalMinutes = hours * 60 + minutes;
+
+  if (!Number.isFinite(totalMinutes) || totalMinutes <= 0) return value;
+  return formatDuration(totalMinutes * 60 * scale);
+}
+
 function getStepIcon(maneuver: string): string {
   if (maneuver.includes("left")) return "←";
   if (maneuver.includes("right")) return "→";
@@ -646,14 +743,14 @@ function buildInstruction(step: OsrmStep): string {
 function getEstimatedTraffic(index: number, durationMin: number) {
   if (index === 0) {
     return {
-      label: durationMin > 45 ? "Moderate traffic" : "Light traffic",
-      color: "text-traffic-moderate",
+      label: durationMin > 45 ? "Moderate traffic included" : "Light traffic included",
+      color: durationMin > 45 ? "text-traffic-moderate" : "text-traffic-free",
     };
   }
 
   if (index === 1) {
     return {
-      label: durationMin > 60 ? "Heavy traffic" : "Moderate traffic",
+      label: durationMin > 60 ? "Heavy traffic included" : "Moderate traffic included",
       color: "text-traffic-heavy",
     };
   }
@@ -662,6 +759,265 @@ function getEstimatedTraffic(index: number, durationMin: number) {
     label: "Alternate route",
     color: "text-muted-foreground",
   };
+}
+
+function getTrafficMultiplier(analysisTime = new Date()) {
+  const parts = getIndiaDateParts(analysisTime);
+  const isWeekend = parts.weekday === 0 || parts.weekday === 6;
+  const isMorningPeak = !isWeekend && parts.hour >= 8 && parts.hour <= 10;
+  const isEveningPeak = !isWeekend && parts.hour >= 17 && parts.hour <= 20;
+  const isLunchTraffic = parts.hour >= 13 && parts.hour <= 14;
+  const isMonsoon = parts.month >= 6 && parts.month <= 9;
+  const event = getCurrentTrafficEvent(analysisTime);
+
+  let multiplier = 1;
+  if (isMorningPeak) multiplier += 0.22;
+  if (isEveningPeak) multiplier += 0.3;
+  if (isWeekend && parts.hour >= 18 && parts.hour <= 21) multiplier += 0.12;
+  if (isLunchTraffic) multiplier += 0.08;
+  if (isMonsoon) multiplier += 0.07;
+  if (event) multiplier += Math.min(0.22, event.penalty / 100);
+
+  return multiplier;
+}
+
+function getVehicleAdjustedDurationMin(params: {
+  osrmDurationSeconds: number;
+  distanceKm: number;
+  vehicle: string;
+  routeIndex: number;
+  analysisTime?: Date;
+}) {
+  const osrmMinutes = Math.max(1, params.osrmDurationSeconds / 60);
+  const trafficMultiplier = getTrafficMultiplier(params.analysisTime);
+  const alternatePenalty = params.routeIndex === 0 ? 1 : params.routeIndex === 1 ? 1.08 : 1.14;
+
+  if (params.vehicle === "walk") {
+    return Math.max(1, Math.round((params.distanceKm / 4.8) * 60 * alternatePenalty));
+  }
+
+  if (params.vehicle === "bike") {
+    const twoWheelerMinutes = Math.max((params.distanceKm / 24) * 60, osrmMinutes * 0.72);
+    return Math.max(1, Math.round(twoWheelerMinutes * (1 + (trafficMultiplier - 1) * 0.6) * alternatePenalty));
+  }
+
+  if (params.vehicle === "bus") {
+    const busMinutes = Math.max((params.distanceKm / 18) * 60, osrmMinutes * 1.18) + 6;
+    return Math.max(1, Math.round(busMinutes * trafficMultiplier * alternatePenalty));
+  }
+
+  return Math.max(1, Math.round(osrmMinutes * trafficMultiplier * alternatePenalty));
+}
+
+function getTomTomTravelMode(vehicle: string) {
+  if (vehicle === "walk") return "pedestrian";
+  if (vehicle === "bike") return "motorcycle";
+  if (vehicle === "bus") return "bus";
+  return "car";
+}
+
+function getTomTomRouteUrl(
+  start: [number, number],
+  end: [number, number],
+  vehicle: string,
+  avoidTolls: boolean
+) {
+  if (!TOMTOM_API_KEY) return null;
+
+  const locations = `${start[0]},${start[1]}:${end[0]},${end[1]}`;
+  const params = new URLSearchParams({
+    key: TOMTOM_API_KEY,
+    traffic: "true",
+    travelMode: getTomTomTravelMode(vehicle),
+    routeType: "fastest",
+    computeTravelTimeFor: "all",
+    instructionsType: "text",
+    language: "en-US",
+    maxAlternatives: "2",
+  });
+
+  if (avoidTolls) params.set("avoid", "tollRoads");
+  return `${TOMTOM_ROUTING_BASE}/${locations}/json?${params.toString()}`;
+}
+
+function getTomTomRouteTraffic(summary: TomTomRoute["summary"], durationMin: number) {
+  const delayMin = Math.round((summary?.trafficDelayInSeconds ?? 0) / 60);
+
+  if (delayMin >= 12) {
+    return {
+      label: `Heavy traffic · ${delayMin} min delay`,
+      color: "text-traffic-heavy",
+    };
+  }
+
+  if (delayMin >= 4 || durationMin > 45) {
+    return {
+      label: delayMin > 0 ? `Moderate traffic · ${delayMin} min delay` : "Moderate traffic",
+      color: "text-traffic-moderate",
+    };
+  }
+
+  return {
+    label: delayMin > 0 ? `Light traffic · ${delayMin} min delay` : "Light traffic",
+    color: "text-traffic-free",
+  };
+}
+
+function mapTomTomRoute(route: TomTomRoute, index: number, vehicle: string, avoidTolls: boolean): RouteResult | null {
+  const summary = route.summary;
+  const distanceKm = Math.round(((summary?.lengthInMeters ?? 0) / 1000) * 10) / 10;
+  const durationMin = Math.max(1, Math.round((summary?.travelTimeInSeconds ?? 0) / 60));
+  const points = route.legs?.flatMap((leg) => leg.points || []) || [];
+  const geometry = points
+    .map((point) => {
+      if (typeof point.latitude !== "number" || typeof point.longitude !== "number") return null;
+      return [point.latitude, point.longitude] as [number, number];
+    })
+    .filter(Boolean) as [number, number][];
+
+  if (!distanceKm || !durationMin || geometry.length === 0) return null;
+
+  const instructions = route.guidance?.instructions || [];
+  const steps = instructions.length > 0
+    ? instructions.map((instruction) => ({
+        instruction: instruction.message || instruction.street || "Continue",
+        distance: formatDistance(instruction.lengthInMeters ?? 0),
+        duration: formatDuration(instruction.travelTimeInSeconds ?? 0),
+        icon: getStepIcon(instruction.maneuver || "straight"),
+        travelMode: vehicle,
+      }))
+    : [{
+        instruction: "Follow the fastest TomTom route toward destination",
+        distance: `${distanceKm} km`,
+        duration: `${durationMin} min`,
+        icon: "↑",
+        travelMode: vehicle,
+      }];
+
+  const traffic = getTomTomRouteTraffic(summary, durationMin);
+  const vehicleInfo: RouteResult["vehicleInfo"] = {};
+
+  if (vehicle === "bus") {
+    vehicleInfo.transitSummary = "TomTom bus estimate uses road traffic, not live public transit schedules.";
+  }
+  if (vehicle === "bike") {
+    vehicleInfo.bikeNote = "TomTom motorcycle routing is used as the closest two-wheeler traffic estimate.";
+  }
+  if (vehicle === "walk") {
+    vehicleInfo.walkNote = "TomTom pedestrian routing is used where pedestrian data is available.";
+    vehicleInfo.calories = Math.round(distanceKm * 65);
+  }
+
+  return {
+    distance: distanceKm,
+    duration: durationMin,
+    geometry,
+    steps,
+    toll: avoidTolls ? "Avoiding toll roads where possible" : "Traffic-aware",
+    trafficLevel: traffic.label,
+    trafficColor: traffic.color,
+    vehicleType: vehicle || "car",
+    summary: index === 0 ? "TomTom fastest route" : `TomTom alternate ${index + 1}`,
+    vehicleInfo,
+  };
+}
+
+async function getTomTomRoutes(
+  start: [number, number],
+  end: [number, number],
+  vehicle: string,
+  avoidTolls: boolean
+): Promise<RouteResult[]> {
+  const url = getTomTomRouteUrl(start, end, vehicle, avoidTolls);
+  if (!url) return [];
+
+  const data = await fetchJson<TomTomRouteResponse>(url, 10000);
+  const routes = (data.routes || [])
+    .map((route, index) => mapTomTomRoute(route, index, vehicle, avoidTolls))
+    .filter(Boolean) as RouteResult[];
+
+  return routes;
+}
+
+function getTomTomIncidentType(category?: number) {
+  if ([1, 7, 8].includes(category ?? -1)) return "accident";
+  if ([9, 10, 11, 14].includes(category ?? -1)) return "construction";
+  if ([6].includes(category ?? -1)) return "closure";
+  if ([2, 3, 4, 5].includes(category ?? -1)) return "congestion";
+  return "other";
+}
+
+function getTomTomIncidentSeverity(magnitude?: number): TrafficIncident["severity"] {
+  if ((magnitude ?? 0) >= 3) return "high";
+  if ((magnitude ?? 0) >= 2) return "medium";
+  return "low";
+}
+
+function getIncidentPoint(incident: TomTomIncident): [number, number] | null {
+  const coordinates = incident.geometry?.coordinates;
+  if (!Array.isArray(coordinates)) return null;
+
+  const first = Array.isArray(coordinates[0])
+    ? coordinates[0] as number[]
+    : coordinates as number[];
+
+  const lng = Number(first[0]);
+  const lat = Number(first[1]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return [lat, lng];
+}
+
+function mapTomTomIncident(incident: TomTomIncident, index: number): TrafficIncident | null {
+  const point = getIncidentPoint(incident);
+  if (!point) return null;
+
+  const properties = incident.properties || {};
+  const eventDescription = properties.events?.map((event) => event.description).filter(Boolean).join(", ");
+  const roadName = properties.roadNumbers?.join(", ") || properties.from || properties.to || null;
+  const type = getTomTomIncidentType(properties.iconCategory);
+  const description = [
+    eventDescription || (type === "congestion" ? "Traffic congestion reported" : "Traffic incident reported"),
+    roadName ? `near ${roadName}` : "",
+  ].filter(Boolean).join(" ");
+
+  return {
+    id: `tomtom-${properties.id || index}`,
+    type,
+    description,
+    latitude: point[0],
+    longitude: point[1],
+    severity: getTomTomIncidentSeverity(properties.magnitudeOfDelay),
+    created_at: properties.startTime || new Date().toISOString(),
+    source: "tomtom",
+    roadName,
+    delaySeconds: properties.delay ?? null,
+  };
+}
+
+function getBboxParam(bbox?: { minLat: number; minLng: number; maxLat: number; maxLng: number }) {
+  const box = bbox || TELANGANA_BBOX;
+  return `${box.minLng},${box.minLat},${box.maxLng},${box.maxLat}`;
+}
+
+async function getTomTomTrafficIncidents(
+  bbox?: { minLat: number; minLng: number; maxLat: number; maxLng: number },
+  limit = 80
+): Promise<TrafficIncident[]> {
+  if (!TOMTOM_API_KEY) return [];
+
+  const fields = "{incidents{type,geometry{type,coordinates},properties{id,iconCategory,magnitudeOfDelay,events{description,code},startTime,endTime,from,to,length,delay,roadNumbers}}}";
+  const params = new URLSearchParams({
+    key: TOMTOM_API_KEY,
+    bbox: getBboxParam(bbox),
+    fields,
+    language: "en-US",
+  });
+
+  const data = await fetchJson<TomTomIncidentResponse>(`${TOMTOM_TRAFFIC_INCIDENTS_URL}?${params.toString()}`, 10000);
+  return (data.incidents || [])
+    .map((incident, index) => mapTomTomIncident(incident, index))
+    .filter(Boolean)
+    .slice(0, limit) as TrafficIncident[];
 }
 
 export function generateRouteInsight(params: {
@@ -1373,6 +1729,16 @@ export async function getRoute(
     return [cached];
   }
 
+  try {
+    const tomTomRoutes = await getTomTomRoutes(start, end, vehicle, avoidTolls);
+    if (tomTomRoutes.length > 0) {
+      cacheRoute(tomTomRoutes[0], start, end, vehicle);
+      return tomTomRoutes;
+    }
+  } catch (error) {
+    console.warn("TomTom routing failed, falling back:", error);
+  }
+
   const edgeResult = await invokeGoogleMapsFunction<{ routes: RouteResult[] }>("directions", {
     origin: start,
     destination: end,
@@ -1380,10 +1746,29 @@ export async function getRoute(
     avoidTolls,
   });
   if (edgeResult?.routes?.length) {
-    const routes = edgeResult.routes.map((route) => ({
-      ...route,
-      toll: avoidTolls ? "Toll avoidance limited" : route.toll,
-    }));
+    const routes = edgeResult.routes.map((route, index) => {
+      const adjustedDuration = getVehicleAdjustedDurationMin({
+        osrmDurationSeconds: route.duration * 60,
+        distanceKm: route.distance,
+        vehicle,
+        routeIndex: index,
+      });
+      const stepDurationScale = route.duration > 0 ? adjustedDuration / route.duration : 1;
+      const traffic = getEstimatedTraffic(index, adjustedDuration);
+
+      return {
+        ...route,
+        duration: adjustedDuration,
+        steps: route.steps.map((step) => ({
+          ...step,
+          duration: scaleFormattedDuration(step.duration, stepDurationScale),
+        })),
+        toll: avoidTolls ? "Toll avoidance limited" : route.toll,
+        trafficLevel: traffic.label,
+        trafficColor: traffic.color,
+        summary: getRouteSummary(index, adjustedDuration, route.distance),
+      };
+    });
     cacheRoute(routes[0], start, end, vehicle);
     return routes;
   }
@@ -1399,8 +1784,14 @@ export async function getRoute(
 
     return data.routes.map((route, index) => {
       const leg = route.legs?.[0];
-      const durationMin = Math.max(1, Math.round(route.duration / 60));
       const distanceKm = Math.round((route.distance / 1000) * 10) / 10;
+      const durationMin = getVehicleAdjustedDurationMin({
+        osrmDurationSeconds: route.duration,
+        distanceKm,
+        vehicle,
+        routeIndex: index,
+      });
+      const stepDurationScale = route.duration > 0 ? (durationMin * 60) / route.duration : 1;
       const geometry = (route.geometry?.coordinates || []).map(
         ([lng, lat]: [number, number]) => [lat, lng] as [number, number]
       );
@@ -1408,7 +1799,7 @@ export async function getRoute(
       const steps = (leg?.steps || []).map((step) => ({
         instruction: buildInstruction(step),
         distance: formatDistance(step.distance),
-        duration: formatDuration(step.duration),
+        duration: formatDuration(step.duration * stepDurationScale),
         icon: getStepIcon(step.maneuver?.modifier || step.maneuver?.type || "straight"),
         travelMode: vehicle,
       }));
@@ -1566,6 +1957,98 @@ export function getUserLocation(): Promise<[number, number]> {
   });
 }
 
+export async function getLiveTrafficIncidents(options?: {
+  bbox?: { minLat: number; minLng: number; maxLat: number; maxLng: number };
+  includeCommunity?: boolean;
+  limit?: number;
+}): Promise<TrafficIncident[]> {
+  const includeCommunity = options?.includeCommunity ?? true;
+  const limit = options?.limit ?? 100;
+  const sources: Array<Promise<TrafficIncident[]>> = [
+    getTomTomTrafficIncidents(options?.bbox, limit).catch((error) => {
+      console.warn("TomTom incidents failed:", error);
+      return [];
+    }),
+  ];
+
+  if (includeCommunity) {
+    sources.push(
+      supabase
+        .from("traffic_incidents")
+        .select("id,type,description,latitude,longitude,severity,created_at")
+        .gt("expires_at", new Date().toISOString())
+        .order("created_at", { ascending: false })
+        .limit(limit)
+        .then(({ data, error }) => {
+          if (error) throw error;
+          return (data || []).map((incident) => ({
+            id: `community-${incident.id}`,
+            type: incident.type || "other",
+            description: incident.description,
+            latitude: incident.latitude,
+            longitude: incident.longitude,
+            severity: incident.severity === "high" || incident.severity === "low" ? incident.severity : "medium",
+            created_at: incident.created_at,
+            source: "community" as const,
+            roadName: null,
+            delaySeconds: null,
+          }));
+        })
+        .catch((error) => {
+          console.warn("Community incidents failed:", error);
+          return [];
+        })
+    );
+  }
+
+  const severityScore = { high: 3, medium: 2, low: 1 };
+  return (await Promise.all(sources))
+    .flat()
+    .sort((a, b) => {
+      const severityDelta = severityScore[b.severity] - severityScore[a.severity];
+      if (severityDelta !== 0) return severityDelta;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    })
+    .slice(0, limit);
+}
+
+export async function getLiveHazardsNearRoute(geometry: [number, number][]): Promise<RoadHazard[]> {
+  if (geometry.length === 0) return [];
+
+  const lats = geometry.map((point) => point[0]);
+  const lngs = geometry.map((point) => point[1]);
+  const padding = 0.04;
+  const incidents = await getLiveTrafficIncidents({
+    bbox: {
+      minLat: Math.min(...lats) - padding,
+      minLng: Math.min(...lngs) - padding,
+      maxLat: Math.max(...lats) + padding,
+      maxLng: Math.max(...lngs) + padding,
+    },
+    limit: 12,
+  });
+
+  return incidents.map((incident) => ({
+    id: incident.id,
+    type: (
+      incident.type === "accident" ||
+      incident.type === "construction" ||
+      incident.type === "closure" ||
+      incident.type === "congestion"
+        ? incident.type
+        : "other"
+    ) as RoadHazard["type"],
+    lat: incident.latitude,
+    lng: incident.longitude,
+    severity: incident.severity,
+    description: [
+      incident.description || "Traffic incident reported",
+      incident.source === "tomtom" ? "TomTom live traffic" : "Community report",
+      incident.delaySeconds ? `${Math.round(incident.delaySeconds / 60)} min delay` : "",
+    ].filter(Boolean).join(" · "),
+  }));
+}
+
 export function getOptimalDeparture(distanceKm: number): string {
   void distanceKm;
   const now = new Date();
@@ -1719,7 +2202,16 @@ function pad2(value: number) {
 export function getSavedRoutes(): SavedRoute[] {
   try {
     const data = localStorage.getItem(SAVED_ROUTES_KEY);
-    return data ? JSON.parse(data) : [];
+    const parsed = data ? JSON.parse(data) : [];
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .filter((route): route is SavedRoute => Boolean(route?.id && route?.source && route?.destination))
+      .sort((a, b) => {
+        const aTime = new Date(a.lastUsedAt || a.savedAt || 0).getTime();
+        const bTime = new Date(b.lastUsedAt || b.savedAt || 0).getTime();
+        return bTime - aTime;
+      });
   } catch {
     return [];
   }
@@ -1729,11 +2221,13 @@ export function saveRoute(route: Omit<SavedRoute, "id" | "savedAt" | "timesUsed"
   const saved = getSavedRoutes();
   const id = `${route.source.join(",")}−${route.destination.join(",")}−${route.vehicle}`;
   const existingIndex = saved.findIndex(r => r.id === id);
+  const now = new Date().toISOString();
   
   const newRoute: SavedRoute = {
     ...route,
     id,
-    savedAt: new Date().toISOString(),
+    savedAt: existingIndex >= 0 ? saved[existingIndex].savedAt : now,
+    lastUsedAt: now,
     timesUsed: existingIndex >= 0 ? saved[existingIndex].timesUsed + 1 : 1,
   };
   
@@ -1743,7 +2237,7 @@ export function saveRoute(route: Omit<SavedRoute, "id" | "savedAt" | "timesUsed"
     saved.unshift(newRoute);
   }
   
-  localStorage.setItem(SAVED_ROUTES_KEY, JSON.stringify(saved.slice(0, 20)));
+  localStorage.setItem(SAVED_ROUTES_KEY, JSON.stringify(saved.slice(0, MAX_SAVED_ROUTES)));
   return newRoute;
 }
 
@@ -1766,7 +2260,10 @@ export function cacheRoute(route: RouteResult, source: [number, number], destina
       cache.push(cacheEntry);
     }
     
-    localStorage.setItem(ROUTE_CACHE_KEY, JSON.stringify(cache.slice(0, 10)));
+    const latest = cache
+      .sort((a, b) => new Date(b.cached).getTime() - new Date(a.cached).getTime())
+      .slice(0, MAX_CACHED_ROUTES);
+    localStorage.setItem(ROUTE_CACHE_KEY, JSON.stringify(latest));
   } catch (error) {
     console.warn("Could not cache route:", error);
   }

@@ -6,8 +6,8 @@
 
 @layer base {
   :root {
-    --background: 210 34% 98%;
-    --foreground: 215 12% 12%;
+    --background: 206 45% 97%;
+    --foreground: 220 36% 10%;
 
     --card: 0 0% 100%;
     --card-foreground: 215 12% 12%;
@@ -15,49 +15,48 @@
     --popover: 0 0% 100%;
     --popover-foreground: 215 12% 12%;
 
-    /* New cohesive palette: primary blue -> secondary teal */
-    --primary: 217 90% 45%; /* bright blue */
+    --primary: 212 92% 47%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 173 72% 36%; /* teal */
+    --secondary: 166 78% 36%;
     --secondary-foreground: 0 0% 100%;
 
-    --muted: 46 31% 92%;
-    --muted-foreground: 196 12% 37%;
+    --muted: 204 35% 92%;
+    --muted-foreground: 214 16% 39%;
 
-    --accent: 169 31% 90%;
-    --accent-foreground: 198 28% 14%;
+    --accent: 190 64% 90%;
+    --accent-foreground: 222 28% 12%;
 
-    --destructive: 7 76% 54%;
+    --destructive: 356 77% 55%;
     --destructive-foreground: 0 0% 100%;
 
-    --warning: 37 93% 56%;
-    --warning-foreground: 198 28% 14%;
+    --warning: 35 96% 56%;
+    --warning-foreground: 222 28% 12%;
 
-    --success: 153 61% 34%;
+    --success: 151 72% 33%;
     --success-foreground: 0 0% 100%;
 
-    --border: 42 20% 84%;
-    --input: 42 20% 84%;
-    --ring: 174 77% 27%;
+    --border: 205 28% 84%;
+    --input: 205 28% 84%;
+    --ring: 212 92% 47%;
 
     --radius: 1rem;
 
-    --traffic-free: 153 61% 34%;
-    --traffic-moderate: 37 93% 56%;
-    --traffic-heavy: 12 82% 58%;
-    --traffic-severe: 2 72% 42%;
+    --traffic-free: 151 72% 33%;
+    --traffic-moderate: 35 96% 56%;
+    --traffic-heavy: 18 88% 55%;
+    --traffic-severe: 356 77% 48%;
 
     --map-overlay: 198 28% 14% / 0.62;
 
-    --sidebar-background: 46 35% 95%;
-    --sidebar-foreground: 198 28% 14%;
-    --sidebar-primary: 174 77% 27%;
+    --sidebar-background: 210 24% 97%;
+    --sidebar-foreground: 222 28% 12%;
+    --sidebar-primary: 212 92% 47%;
     --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 169 31% 90%;
-    --sidebar-accent-foreground: 198 28% 14%;
-    --sidebar-border: 42 20% 84%;
-    --sidebar-ring: 174 77% 27%;
+    --sidebar-accent: 190 64% 90%;
+    --sidebar-accent-foreground: 222 28% 12%;
+    --sidebar-border: 214 18% 86%;
+    --sidebar-ring: 212 92% 47%;
   }
 }
 
@@ -72,9 +71,10 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     background-image:
-      radial-gradient(circle at top left, hsl(169 31% 90% / 0.9), transparent 28%),
-      radial-gradient(circle at top right, hsl(40 88% 56% / 0.18), transparent 22%),
-      linear-gradient(180deg, hsl(var(--background)), hsl(45 36% 95%));
+      radial-gradient(circle at 15% 0%, hsl(212 92% 47% / 0.16), transparent 32%),
+      radial-gradient(circle at 90% 10%, hsl(166 78% 36% / 0.16), transparent 26%),
+      radial-gradient(circle at 70% 100%, hsl(35 96% 56% / 0.12), transparent 30%),
+      linear-gradient(180deg, hsl(204 50% 98%), hsl(var(--background)));
     background-attachment: fixed;
   }
 
@@ -91,16 +91,19 @@
 @layer components {
   .bottom-sheet {
     @apply bg-card rounded-t-[1.75rem] shadow-xl;
-    background: linear-gradient(180deg, hsl(0 0% 100% / 0.98), hsl(46 30% 97% / 0.98));
-    box-shadow: 0 -10px 40px hsl(var(--foreground) / 0.1);
+    background:
+      linear-gradient(180deg, hsl(0 0% 100% / 0.98), hsl(204 55% 98% / 0.98));
+    box-shadow: 0 -18px 44px hsl(220 36% 10% / 0.13);
     border-top: 1px solid hsl(var(--border));
   }
 
   .floating-card {
     @apply bg-card rounded-2xl;
-    background: linear-gradient(180deg, hsl(0 0% 100% / 0.96), hsl(48 38% 98% / 0.96));
-    border: 1px solid hsl(var(--border));
-    box-shadow: 0 10px 30px hsl(198 28% 14% / 0.08);
+    background:
+      linear-gradient(180deg, hsl(0 0% 100% / 0.95), hsl(202 55% 98% / 0.92));
+    border: 1px solid hsl(0 0% 100% / 0.72);
+    box-shadow: 0 12px 30px hsl(220 36% 10% / 0.12);
+    backdrop-filter: blur(14px);
   }
 
   .touch-target {
@@ -109,9 +112,31 @@
 
   .map-control-btn {
     @apply bg-card rounded-full shadow-lg touch-target transition-transform active:scale-95;
-    background: linear-gradient(180deg, hsl(0 0% 100%), hsl(48 38% 97%));
-    border: 1px solid hsl(var(--border));
-    box-shadow: 0 6px 18px hsl(198 28% 14% / 0.12);
+    background:
+      linear-gradient(180deg, hsl(0 0% 100% / 0.96), hsl(202 55% 98% / 0.94));
+    border: 1px solid hsl(0 0% 100% / 0.74);
+    box-shadow: 0 10px 24px hsl(220 36% 10% / 0.14);
+    backdrop-filter: blur(14px);
+  }
+
+  .map-scrim {
+    pointer-events: none;
+    background:
+      linear-gradient(180deg, hsl(215 35% 10% / 0.26), transparent 28%),
+      linear-gradient(0deg, hsl(215 35% 10% / 0.18), transparent 32%);
+  }
+
+  .stat-chip {
+    @apply rounded-xl border border-border bg-background/70 px-3 py-2;
+    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.6);
+  }
+
+  .premium-card {
+    background:
+      linear-gradient(135deg, hsl(212 92% 47% / 0.08), transparent 34%),
+      linear-gradient(180deg, hsl(0 0% 100% / 0.98), hsl(202 55% 98% / 0.98));
+    border: 1px solid hsl(0 0% 100% / 0.75);
+    box-shadow: 0 14px 34px hsl(220 36% 10% / 0.12);
   }
 }
 
@@ -175,17 +200,17 @@
 .route-card {
   border-radius: 1rem;
   padding: 1rem;
-  transition: transform 150ms ease, box-shadow 150ms ease;
+  transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
 }
 .route-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 18px 40px rgba(17,24,39,0.06);
+  transform: translateY(-2px);
+  box-shadow: 0 18px 44px rgba(17,24,39,0.1);
 }
 
 .btn-primary {
-  background: linear-gradient(90deg, hsl(var(--primary)) 0%, hsl(var(--secondary)) 100%);
+  background: linear-gradient(135deg, hsl(212 92% 47%) 0%, hsl(166 78% 36%) 100%);
   color: rgb(var(--primary-foreground));
-  box-shadow: 0 8px 24px rgba(30,64,175,0.12);
+  box-shadow: 0 10px 26px hsl(212 92% 47% / 0.2);
 }
 
 .btn-primary:hover {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Star, Navigation, Trash2, Loader2, LogIn } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -23,6 +23,7 @@ const Favorites = () => {
   const [favorites, setFavorites] = useState<FavoriteRoute[]>([]);
   const [localRoutes, setLocalRoutes] = useState<SavedRoute[]>([]);
   const [loading, setLoading] = useState(true);
+  const syncedUserRef = useRef<string | null>(null);
 
   useEffect(() => {
     setLocalRoutes(getSavedRoutes());
@@ -44,9 +45,54 @@ const Favorites = () => {
       toast.error("Failed to load favorites");
       console.error(error);
     } else {
-      setFavorites(data || []);
+      const cloudFavorites = data || [];
+      setFavorites(cloudFavorites);
+      await syncLocalRoutesToCloud(cloudFavorites);
     }
     setLoading(false);
+  };
+
+  const syncLocalRoutesToCloud = async (cloudFavorites: FavoriteRoute[]) => {
+    const deviceRoutes = getSavedRoutes();
+    if (!user || deviceRoutes.length === 0 || syncedUserRef.current === user.id) return;
+
+    const cloudKeys = new Set(
+      cloudFavorites.map((fav) => getRouteKey(fav.source_coords, fav.dest_coords, fav.vehicle_type))
+    );
+    const missingRoutes = deviceRoutes.filter(
+      (route) => !cloudKeys.has(getRouteKey(route.source, route.destination, route.vehicle))
+    );
+
+    if (missingRoutes.length === 0) {
+      syncedUserRef.current = user.id;
+      return;
+    }
+
+    const { error } = await supabase.from("favorite_routes").insert(
+      missingRoutes.map((route) => ({
+        user_id: user.id,
+        name: route.name,
+        source_name: route.sourceLabel,
+        source_coords: route.source,
+        dest_name: route.destLabel,
+        dest_coords: route.destination,
+        vehicle_type: route.vehicle,
+      }))
+    );
+
+    syncedUserRef.current = user.id;
+
+    if (error) {
+      toast.warning("Device routes are saved locally. Cloud sync failed.");
+      return;
+    }
+
+    toast.success("Device saved routes synced");
+    const { data } = await supabase
+      .from("favorite_routes")
+      .select("*")
+      .order("created_at", { ascending: false });
+    setFavorites(data || cloudFavorites);
   };
 
   const deleteFavorite = async (id: string) => {
@@ -121,13 +167,13 @@ const Favorites = () => {
           <div>
             <h1 className="text-xl font-bold text-foreground">Saved</h1>
             <p className="text-xs text-muted-foreground mt-1">
-              {user ? "Your favorite routes" : "Routes saved on this device"}
+              {user ? "Cloud favorites and device routes" : "Routes saved on this device"}
             </p>
           </div>
           {!user && (
             <button
               onClick={() => navigate("/auth")}
-              className="shrink-0 bg-primary text-primary-foreground px-3 py-2 rounded-lg font-semibold text-xs flex items-center gap-1.5"
+              className="btn-primary shrink-0 px-3 py-2 rounded-lg font-semibold text-xs flex items-center gap-1.5"
             >
               <LogIn className="w-3.5 h-3.5" /> Sign In
             </button>
@@ -151,7 +197,7 @@ const Favorites = () => {
             {visibleLocalRoutes.map((route) => (
               <div
                 key={route.id}
-                className="floating-card p-3 flex items-center gap-3"
+                className="premium-card rounded-2xl p-3 flex items-center gap-3"
               >
                 <button
                   onClick={() => navigateToLocalRoute(route)}
@@ -179,7 +225,7 @@ const Favorites = () => {
             {user && favorites.map((fav) => (
               <div
                 key={fav.id}
-                className="floating-card p-3 flex items-center gap-3"
+                className="premium-card rounded-2xl p-3 flex items-center gap-3"
               >
                 <button
                   onClick={() => navigateToRoute(fav)}
